@@ -365,11 +365,11 @@ class FloatingOverlayService : Service() {
      * character (which shows as "obj" or an empty box) is never produced.
      */
     private fun htmlToPlainText(html: String): String {
-        val withPlaceholders = html.replace(
-            Regex("<img[^>]*>", setOf(RegexOption.IGNORE_CASE)), " [🖼] "
+        val withoutImages = html.replace(
+            Regex("<img[^>]*>", setOf(RegexOption.IGNORE_CASE)), ""
         )
         return android.text.Html.fromHtml(
-            withPlaceholders,
+            withoutImages,
             android.text.Html.FROM_HTML_MODE_COMPACT
         ).toString().trim()
     }
