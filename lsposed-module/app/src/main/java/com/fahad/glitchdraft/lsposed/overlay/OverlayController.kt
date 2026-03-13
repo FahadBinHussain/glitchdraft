@@ -6,10 +6,13 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.util.Base64
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -489,7 +492,7 @@ object OverlayController {
         r: DraftRepository
     ) {
         val ctx = container.context
-        val plainText = android.text.Html.fromHtml(draft.html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+        val plainText = htmlToPlainText(draft.html)
 
         // ── Card wrapping all content for this draft ──────────────────────────
         val card = LinearLayout(ctx).apply {
@@ -501,7 +504,7 @@ object OverlayController {
         val displayGroup = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
 
         val textView = TextView(ctx).apply {
-            text = android.text.Html.fromHtml(draft.html, android.text.Html.FROM_HTML_MODE_COMPACT)
+            text = htmlToDisplaySpanned(ctx, draft.html)
             textSize = 13f
             setTextColor(Color.BLACK)
             maxLines = 3
@@ -674,6 +677,72 @@ object OverlayController {
      * [EditText] that looks like a message-compose input (visible, enabled,
      * focusable, not a password field).  Returns null if none is found.
      */
+    /**
+     * Converts [html] to a [android.text.Spanned] for display in a [TextView].
+     *
+     * `data:image/...;base64,...` URIs are decoded directly to a [BitmapDrawable]
+     * so images stored by the extension (which converts blob → data-URL before
+     * saving to Firestore) are rendered as real images.
+     *
+     * Any `<img>` whose src is NOT a data-URI (e.g. an http URL) falls back to a
+     * small grey placeholder rectangle so the layout never collapses.
+     */
+    private fun htmlToDisplaySpanned(ctx: Context, html: String): android.text.Spanned {
+        val imageGetter = android.text.Html.ImageGetter { source ->
+            if (source != null && source.startsWith("data:")) {
+                try {
+                    // data:[<mime>][;base64],<data>
+                    val commaIdx = source.indexOf(',')
+                    if (commaIdx >= 0) {
+                        val base64Data = source.substring(commaIdx + 1)
+                        val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        if (bitmap != null) {
+                            // Scale down to at most 240 dp wide so it fits inside the panel
+                            val maxPx = dp(ctx, 240)
+                            val origW = bitmap.width
+                            val origH = bitmap.height
+                            val (dw, dh) = if (origW > maxPx) {
+                                maxPx to (origH.toLong() * maxPx / origW).toInt()
+                            } else {
+                                origW to origH
+                            }
+                            return@ImageGetter BitmapDrawable(ctx.resources, bitmap).also {
+                                it.setBounds(0, 0, dw, dh)
+                            }
+                        }
+                    }
+                } catch (_: Throwable) { /* fall through to placeholder */ }
+            }
+            // Fallback: grey placeholder rectangle
+            android.graphics.drawable.ColorDrawable(0xFFCCCCCC.toInt()).also {
+                val px = dp(ctx, 24)
+                it.setBounds(0, 0, px, px)
+            }
+        }
+        return android.text.Html.fromHtml(
+            html,
+            android.text.Html.FROM_HTML_MODE_COMPACT,
+            imageGetter,
+            null
+        )
+    }
+
+    /**
+     * Strips [html] to plain text.  Every `<img>` tag is replaced with a 🖼
+     * placeholder so images are acknowledged and the \uFFFC object-replacement
+     * character (which shows as "obj" or an empty box) is never produced.
+     */
+    private fun htmlToPlainText(html: String): String {
+        val withPlaceholders = html.replace(
+            Regex("<img[^>]*>", setOf(RegexOption.IGNORE_CASE)), " [🖼] "
+        )
+        return android.text.Html.fromHtml(
+            withPlaceholders,
+            android.text.Html.FROM_HTML_MODE_COMPACT
+        ).toString().trim()
+    }
+
     private fun findMessageInput(root: View): EditText? {
         if (root is EditText) {
             val iType = root.inputType

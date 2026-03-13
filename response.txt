@@ -1,1 +1,1 @@
-﻿add the 4 actions of the extension, use, copy, edit and delete is already implemented
+﻿ok, preview in ui working now, what caan we do about pasting? does android support pasting directly?

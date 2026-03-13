@@ -6,8 +6,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.BitmapDrawable
+import android.util.Base64
 import android.os.IBinder
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -233,10 +236,10 @@ class FloatingOverlayService : Service() {
         chatId: String
     ) {
         val item = LayoutInflater.from(this).inflate(R.layout.overlay_draft_item, container, false)
-        val plainText = android.text.Html.fromHtml(draft.html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+        val plainText = htmlToPlainText(draft.html)
 
         item.findViewById<TextView>(R.id.tv_draft_content)?.text =
-            android.text.Html.fromHtml(draft.html, android.text.Html.FROM_HTML_MODE_COMPACT)
+            htmlToDisplaySpanned(draft.html)
 
         val displayGroup = item.findViewById<View>(R.id.group_display)
         val editGroup    = item.findViewById<View>(R.id.group_edit)
@@ -310,6 +313,66 @@ class FloatingOverlayService : Service() {
     // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Converts [html] to a [android.text.Spanned] for display in a [TextView].
+     * Every `<img>` is rendered as a small grey placeholder rectangle so images
+     * never appear as invisible zero-size boxes.
+     */
+    private fun htmlToDisplaySpanned(html: String): android.text.Spanned {
+        val imageGetter = android.text.Html.ImageGetter { source ->
+            if (source != null && source.startsWith("data:")) {
+                try {
+                    // data:[<mime>][;base64],<data>
+                    val commaIdx = source.indexOf(',')
+                    if (commaIdx >= 0) {
+                        val base64Data = source.substring(commaIdx + 1)
+                        val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        if (bitmap != null) {
+                            // Scale down to at most 240px wide so it fits inside the panel
+                            val maxPx = (240 * resources.displayMetrics.density).toInt()
+                            val origW = bitmap.width
+                            val origH = bitmap.height
+                            val (dw, dh) = if (origW > maxPx) {
+                                maxPx to (origH.toLong() * maxPx / origW).toInt()
+                            } else {
+                                origW to origH
+                            }
+                            return@ImageGetter BitmapDrawable(resources, bitmap).also {
+                                it.setBounds(0, 0, dw, dh)
+                            }
+                        }
+                    }
+                } catch (_: Throwable) { /* fall through to placeholder */ }
+            }
+            // Fallback: grey placeholder rectangle
+            android.graphics.drawable.ColorDrawable(0xFFCCCCCC.toInt()).also {
+                it.setBounds(0, 0, 48, 48)
+            }
+        }
+        return android.text.Html.fromHtml(
+            html,
+            android.text.Html.FROM_HTML_MODE_COMPACT,
+            imageGetter,
+            null
+        )
+    }
+
+    /**
+     * Strips [html] to plain text. Every `<img>` tag is replaced with a 🖼
+     * placeholder so images are acknowledged and the \uFFFC object-replacement
+     * character (which shows as "obj" or an empty box) is never produced.
+     */
+    private fun htmlToPlainText(html: String): String {
+        val withPlaceholders = html.replace(
+            Regex("<img[^>]*>", setOf(RegexOption.IGNORE_CASE)), " [🖼] "
+        )
+        return android.text.Html.fromHtml(
+            withPlaceholders,
+            android.text.Html.FROM_HTML_MODE_COMPACT
+        ).toString().trim()
+    }
 
     /** Returns the current chat ID stored in SharedPreferences by the hook */
     private fun currentChatId(): String? =
