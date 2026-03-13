@@ -739,6 +739,37 @@ object OverlayController {
     }
 
     /**
+     * Walks [root] breadth-first and returns the first [View] that declares
+     * image MIME-type support via [View.getReceiveContentMimeTypes()] (API 31+).
+     *
+     * This is the view that has an [OnReceiveContentListener] registered —
+     * the ONLY view where [View.performReceiveContent] and
+     * [InputConnection.commitContent] will actually be consumed by Messenger.
+     */
+    private fun findImageReceivingView(root: View): View? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+        val queue = ArrayDeque<View>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val v = queue.removeFirst()
+            try {
+                val mimeTypes = View::class.java
+                    .getMethod("getReceiveContentMimeTypes")
+                    .invoke(v)
+                if (mimeTypes is Array<*> &&
+                    mimeTypes.any { (it as? String)?.startsWith("image/") == true }) {
+                    XposedBridge.log("$TAG findImageReceivingView: found ${v.javaClass.name} mimes=${mimeTypes.toList()}")
+                    return v
+                }
+            } catch (_: Throwable) {}
+            if (v is ViewGroup) {
+                for (i in 0 until v.childCount) queue.add(v.getChildAt(i))
+            }
+        }
+        return null
+    }
+
+    /**
      * Extracts all `src` attribute values from `<img>` tags in [html].
      */
     private fun extractImgSrcs(html: String): List<String> {
@@ -831,10 +862,21 @@ object OverlayController {
                         val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE)
                                 as? android.view.inputmethod.InputMethodManager
 
-                        // Find the compose view and re-focus it so the Activity window is active
+                        // Find the compose view and re-focus it so the Activity window is active.
+                        // Priority:
+                        //  1. findImageReceivingView — the view with OnReceiveContentListener for images (API 31+)
+                        //  2. currentFocus          — whatever is already focused
+                        //  3. findAnyInputView      — first view with a valid InputConnection
+                        //  4. findMessageInput      — plain EditText fallback
                         val decorRoot = activity?.window?.decorView
-                        val composeView: View? = activity?.currentFocus
+                        val imageView  = decorRoot?.let { findImageReceivingView(it) }
+                        val composeView: View? = imageView
+                            ?: activity?.currentFocus
+                            ?: decorRoot?.let { findAnyInputView(it) }
                             ?: decorRoot?.let { findMessageInput(it) }
+                        // For image delivery we always prefer the image-capable view, even if
+                        // a different view currently has focus.
+                        val imageTarget: View? = imageView ?: composeView
 
                         XposedBridge.log("[GlitchDraft] autoPaste: composeView=${composeView?.javaClass?.name}")
 
@@ -850,17 +892,81 @@ object OverlayController {
                         Handler(Looper.getMainLooper()).postDelayed({
                             var pasted = false
 
+                            // ── Method E: InputConnection.commitContent() ─────────────────────
+                            // This is THE call GBoard makes when inserting an image from the
+                            // keyboard.  It works on API 25+ (minSdk=26 so always available).
+                            // We create a fresh InputConnection from imageTarget — the view that
+                            // has OnReceiveContentListener registered — and call commitContent()
+                            // with the MediaStore URI.  This completely bypasses the clipboard
+                            // and source-filtering that blocks Methods A–D for images.
+                            if (!pasted && imageTarget != null) {
+                                try {
+                                    imageTarget.requestFocus()
+                                    val editorInfo = android.view.inputmethod.EditorInfo()
+                                    val ic = imageTarget.onCreateInputConnection(editorInfo)
+                                    XposedBridge.log("[GlitchDraft] autoPaste: METHOD_E ic=$ic contentMimes=${editorInfo.contentMimeTypes?.toList()}")
+                                    if (ic != null) {
+                                        val desc = android.content.ClipDescription(
+                                            "image", arrayOf(mimeType))
+                                        val ici  = android.view.inputmethod.InputContentInfo(
+                                            uri, desc, null)
+                                        // requestPermission() is a best-effort grant; may be a
+                                        // no-op outside an IME process — that's fine, we own the
+                                        // URI because we created it in Messenger's process.
+                                        try { ici.requestPermission() } catch (_: Throwable) {}
+                                        // flags = 1 = INPUT_CONTENT_GRANT_READ_URI_PERMISSION
+                                        val r = ic.commitContent(ici, 1, null)
+                                        XposedBridge.log("[GlitchDraft] autoPaste: METHOD_E commitContent result=$r")
+                                        if (r) pasted = true
+                                        try { ic.closeConnection() } catch (_: Throwable) {}
+                                    }
+                                } catch (e: Throwable) {
+                                    XposedBridge.log("[GlitchDraft] autoPaste: METHOD_E error: $e")
+                                }
+                            }
+
+                            // ── Method F: View.performReceiveContent() — API 31+ ─────────────
+                            // Try SOURCE_INPUT_METHOD (=2) first — that is what GBoard signals
+                            // and what most apps' OnReceiveContentListener checks for.
+                            // SOURCE_CLIPBOARD (=1) is attempted second as a fallback.
+                            // Always target imageTarget (the view with the registered listener).
+                            if (!pasted && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && imageTarget != null) {
+                                for (source in listOf(2 /* SOURCE_INPUT_METHOD */, 1 /* SOURCE_CLIPBOARD */)) {
+                                    if (pasted) break
+                                    try {
+                                        val clipData = (ctx.getSystemService(Context.CLIPBOARD_SERVICE)
+                                                as? ClipboardManager)?.primaryClip ?: continue
+                                        val builderClass    = Class.forName("android.view.ContentInfo\$Builder")
+                                        val builderCtor     = builderClass.getDeclaredConstructor(
+                                            ClipData::class.java, Int::class.java)
+                                        val builder         = builderCtor.newInstance(clipData, source)
+                                        val contentInfo     = builderClass.getMethod("build").invoke(builder)
+                                        val contentInfoClass = Class.forName("android.view.ContentInfo")
+                                        val performMethod   = View::class.java.getMethod(
+                                            "performReceiveContent", contentInfoClass)
+                                        val remaining = performMethod.invoke(imageTarget, contentInfo)
+                                        XposedBridge.log("[GlitchDraft] autoPaste: METHOD_F source=$source remaining=$remaining")
+                                        // null = fully consumed by the listener (success)
+                                        if (remaining == null) pasted = true
+                                    } catch (e: Throwable) {
+                                        XposedBridge.log("[GlitchDraft] autoPaste: METHOD_F source=$source error: $e")
+                                    }
+                                }
+                            }
+
                             // Method A: Activity.dispatchKeyEvent(KEYCODE_PASTE)
-                            //   Mirrors the keyboard paste button exactly.
-                            try {
-                                val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_PASTE)
-                                val up   = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP,   android.view.KeyEvent.KEYCODE_PASTE)
-                                val r1 = activity?.dispatchKeyEvent(down) ?: false
-                                val r2 = activity?.dispatchKeyEvent(up)   ?: false
-                                XposedBridge.log("[GlitchDraft] autoPaste: METHOD_A activity dispatch down=$r1 up=$r2")
-                                if (r1 || r2) pasted = true
-                            } catch (e: Throwable) {
-                                XposedBridge.log("[GlitchDraft] autoPaste: METHOD_A error: $e")
+                            //   Works on API < 31 and as a fallback for text-only fields.
+                            if (!pasted) {
+                                try {
+                                    val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_PASTE)
+                                    val up   = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP,   android.view.KeyEvent.KEYCODE_PASTE)
+                                    val r1 = activity?.dispatchKeyEvent(down) ?: false
+                                    val r2 = activity?.dispatchKeyEvent(up)   ?: false
+                                    XposedBridge.log("[GlitchDraft] autoPaste: METHOD_A activity dispatch down=$r1 up=$r2")
+                                    if (r1 || r2) pasted = true
+                                } catch (e: Throwable) {
+                                    XposedBridge.log("[GlitchDraft] autoPaste: METHOD_A error: $e")
+                                }
                             }
 
                             // Method B: AccessibilityNodeInfo ACTION_PASTE on the compose view
@@ -887,22 +993,29 @@ object OverlayController {
                                 }
                             }
 
-                            // Method D: IMM reflection — call performContextMenuAction on the
-                            //   active InputConnection stored inside InputMethodManager.
+                            // Method D: IMM reflection — walk the entire InputMethodManager class
+                            //   hierarchy and call performContextMenuAction(paste) on every field
+                            //   that implements InputConnection.  This covers obfuscated field names
+                            //   across AOSP forks and vendor ROMs.
                             if (!pasted && imm != null) {
-                                for (fieldName in listOf("mCurInputConnection", "mLastInputConnection", "mCurRootInputConnection")) {
-                                    try {
-                                        val f = android.view.inputmethod.InputMethodManager::class.java
-                                            .getDeclaredField(fieldName)
-                                        f.isAccessible = true
-                                        val ic = f.get(imm) as? android.view.inputmethod.InputConnection
-                                        if (ic != null) {
-                                            val r = ic.performContextMenuAction(android.R.id.paste)
-                                            XposedBridge.log("[GlitchDraft] autoPaste: METHOD_D field=$fieldName result=$r")
-                                            if (r) { pasted = true; break }
+                                try {
+                                    var immCls: Class<*>? = android.view.inputmethod.InputMethodManager::class.java
+                                    outer@ while (immCls != null && immCls != Any::class.java) {
+                                        for (f in immCls.declaredFields) {
+                                            if (!android.view.inputmethod.InputConnection::class.java
+                                                    .isAssignableFrom(f.type)) continue
+                                            try {
+                                                f.isAccessible = true
+                                                val ic = f.get(imm) as? android.view.inputmethod.InputConnection
+                                                    ?: continue
+                                                val r = ic.performContextMenuAction(android.R.id.paste)
+                                                XposedBridge.log("[GlitchDraft] autoPaste: METHOD_D field=${f.name} result=$r")
+                                                if (r) { pasted = true; break@outer }
+                                            } catch (_: Throwable) {}
                                         }
-                                    } catch (_: Throwable) {}
-                                }
+                                        immCls = immCls.superclass
+                                    }
+                                } catch (_: Throwable) {}
                             }
 
                             XposedBridge.log("[GlitchDraft] autoPaste: final pasted=$pasted")
