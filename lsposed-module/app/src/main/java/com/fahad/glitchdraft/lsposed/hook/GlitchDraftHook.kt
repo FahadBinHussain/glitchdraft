@@ -505,6 +505,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
                         extractChatId(url)?.let { OverlayController.setChatId(it) }
 
                         XposedBridge.log("$TAG: onPageFinished triggered for $url")
+                        OverlayController.setWebView(webView)
                         injectGlitchDraft(webView, lpparam)
                     }
                 }

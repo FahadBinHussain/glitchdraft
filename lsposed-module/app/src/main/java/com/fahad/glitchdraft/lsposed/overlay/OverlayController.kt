@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -12,17 +13,21 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
-import android.util.Base64
+import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.provider.Settings
 import android.text.InputType
+import android.util.Base64
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.webkit.WebView
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -32,6 +37,9 @@ import android.widget.TextView
 import android.widget.Toast
 import com.fahad.glitchdraft.lsposed.data.DraftRepository
 import de.robv.android.xposed.XposedBridge
+import java.io.File
+import java.io.FileOutputStream
+import java.lang.ref.WeakReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -76,6 +84,15 @@ object OverlayController {
 
     private var isPanelVisible = false
     private var isAttached = false
+
+    /** Weak reference to the last WebView that loaded a target URL.
+     *  Used by the Use button to call window.GlitchDraftUseMessage(html)
+     *  via evaluateJavascript so the extension's own image+text paste logic runs. */
+    private var currentWebView: WeakReference<WebView>? = null
+
+    fun setWebView(wv: WebView) {
+        currentWebView = WeakReference(wv)
+    }
 
     private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var repo: DraftRepository? = null
@@ -607,22 +624,47 @@ object OverlayController {
 
         // ── Button listeners ──────────────────────────────────────────────────
 
-        // USE: try to inject plain text into the host app's message EditText,
-        //      fall back to clipboard copy if no suitable input is found.
+        // USE: WebView path → call extension's useMessage() which handles text + images natively.
+        //      Native app path → inject text into the compose EditText AND put images on the
+        //      clipboard via MediaStore so the user can long-press→paste them.
         useBtn.setOnClickListener {
-            val activity = panelView?.context as? Activity
-            val decorRoot = activity?.window?.decorView
-            val msgInput = decorRoot?.let { findMessageInput(it) }
-            if (msgInput != null) {
-                msgInput.setText(plainText)
-                msgInput.setSelection(msgInput.text.length)
-                msgInput.requestFocus()
-                togglePanel()   // close panel after injecting
+            val wv = currentWebView?.get()
+            if (wv != null) {
+                // ── WebView (Messenger/Discord web, WhatsApp Web) ─────────────
+                val jsonHtml = org.json.JSONObject.quote(draft.html)
+                wv.evaluateJavascript(
+                    "window.GlitchDraftUseMessage && window.GlitchDraftUseMessage($jsonHtml)",
+                    null
+                )
+                togglePanel()
             } else {
-                // Fallback: put text on clipboard and toast
-                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                cm?.setPrimaryClip(ClipData.newPlainText("draft", plainText))
-                Toast.makeText(ctx, "Copied – paste in your message", Toast.LENGTH_SHORT).show()
+                // ── Native app (e.g. Messenger Android) ───────────────────────
+                // Extract image src values from the HTML before stripping
+                val imgSrcs = extractImgSrcs(draft.html)
+
+                // 1. Inject text into the compose EditText (if any text exists)
+                val activity = panelView?.context as? Activity
+                val decorRoot = activity?.window?.decorView
+                val msgInput = decorRoot?.let { findMessageInput(it) }
+                if (plainText.isNotBlank() && msgInput != null) {
+                    msgInput.setText(plainText)
+                    msgInput.setSelection(msgInput.text.length)
+                    msgInput.requestFocus()
+                } else if (plainText.isNotBlank()) {
+                    // EditText not found – fall back to clipboard for text
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    cm?.setPrimaryClip(ClipData.newPlainText("draft", plainText))
+                    Toast.makeText(ctx, "Text copied – paste in your message", Toast.LENGTH_SHORT).show()
+                }
+
+                // 2. Handle images via MediaStore clipboard
+                if (imgSrcs.isNotEmpty()) {
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        insertImagesViaMediaStore(ctx, imgSrcs)
+                    }
+                }
+
+                togglePanel()
             }
         }
 
@@ -669,6 +711,109 @@ object OverlayController {
         cancelEditBtn.setOnClickListener {
             editGroup.visibility = View.GONE
             displayGroup.visibility = View.VISIBLE
+        }
+    }
+
+    /**
+     * Extracts all `src` attribute values from `<img>` tags in [html].
+     */
+    private fun extractImgSrcs(html: String): List<String> {
+        val srcs = mutableListOf<String>()
+        val pattern = Regex("<img[^>]+src=[\"']([^\"']+)[\"']", RegexOption.IGNORE_CASE)
+        pattern.findAll(html).forEach { srcs.add(it.groupValues[1]) }
+        return srcs
+    }
+
+    /**
+     * For each `data:image/...;base64,...` URI in [srcList]:
+     *  1. Decodes the bytes.
+     *  2. Writes a temp entry into [MediaStore.Images] so Android gives it a
+     *     `content://` URI that any app can paste.
+     *  3. Puts the URI on the system clipboard.
+     *  4. Schedules automatic deletion after 2 minutes to keep the gallery clean.
+     *
+     * Only the FIRST image is put on the clipboard (Android clipboard holds one
+     * item at a time).  A toast guides the user to long-press → paste.
+     */
+    private fun insertImagesViaMediaStore(ctx: Context, srcList: List<String>) {
+        val dataUri = srcList.firstOrNull { it.startsWith("data:") } ?: run {
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(ctx, "No embeddable image found in draft", Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
+
+        try {
+            val commaIdx = dataUri.indexOf(',')
+            if (commaIdx < 0) return
+            val header  = dataUri.substring(0, commaIdx)          // "data:image/png;base64"
+            val b64Data = dataUri.substring(commaIdx + 1)
+            val bytes   = Base64.decode(b64Data, Base64.DEFAULT)
+
+            val mimeType = when {
+                header.contains("gif",  ignoreCase = true) -> "image/gif"
+                header.contains("jpeg", ignoreCase = true) ||
+                header.contains("jpg",  ignoreCase = true) -> "image/jpeg"
+                header.contains("webp", ignoreCase = true) -> "image/webp"
+                else -> "image/png"
+            }
+            val ext = when (mimeType) {
+                "image/gif"  -> "gif"
+                "image/jpeg" -> "jpg"
+                "image/webp" -> "webp"
+                else         -> "png"
+            }
+            val fileName = "glitchdraft_${System.currentTimeMillis()}.$ext"
+
+            val contentUri: Uri? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Android 10+ – use MediaStore with IS_PENDING
+                val values = ContentValues().apply {
+                    put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+                val uri = ctx.contentResolver.insert(
+                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values
+                ) ?: return
+                ctx.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                val done = ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }
+                ctx.contentResolver.update(uri, done, null, null)
+                uri
+            } else {
+                // Android < 10 – write to public Pictures directory
+                @Suppress("DEPRECATION")
+                val dir = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_PICTURES
+                )
+                dir.mkdirs()
+                val file = File(dir, fileName)
+                FileOutputStream(file).use { it.write(bytes) }
+                android.media.MediaScannerConnection.scanFile(
+                    ctx, arrayOf(file.absolutePath), arrayOf(mimeType), null
+                )
+                Uri.fromFile(file)
+            }
+
+            contentUri?.let { uri ->
+                Handler(Looper.getMainLooper()).post {
+                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    cm?.setPrimaryClip(ClipData.newUri(ctx.contentResolver, "image", uri))
+                    val msg = if (srcList.size > 1)
+                        "Image 1/${srcList.size} in clipboard – long-press in message box to paste"
+                    else
+                        "Image in clipboard – long-press in message box to paste"
+                    Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                }
+                // Auto-delete after 2 minutes to keep gallery clean
+                Handler(Looper.getMainLooper()).postDelayed({
+                    try { ctx.contentResolver.delete(uri, null, null) } catch (_: Throwable) {}
+                }, 120_000L)
+            }
+        } catch (e: Throwable) {
+            XposedBridge.log("[GlitchDraft] insertImagesViaMediaStore failed: $e")
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(ctx, "Could not prepare image for pasting", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
