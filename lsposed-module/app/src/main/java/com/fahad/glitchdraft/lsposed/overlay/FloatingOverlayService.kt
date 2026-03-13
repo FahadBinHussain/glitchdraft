@@ -233,7 +233,7 @@ class FloatingOverlayService : Service() {
             android.text.Html.fromHtml(draft.html, android.text.Html.FROM_HTML_MODE_COMPACT)
         item.findViewById<View>(R.id.btn_delete_draft)?.setOnClickListener {
             serviceScope.launch {
-                repo.deleteDraft(chatId)
+                repo.deleteDraftByTimestamp(chatId, draft.timestamp)
                 loadDraftsIntoPanel()
             }
         }

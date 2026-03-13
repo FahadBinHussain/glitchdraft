@@ -510,7 +510,7 @@ object OverlayController {
 
         delBtn.setOnClickListener {
             scope.launch {
-                try { r.deleteDraft(chatId) } catch (_: Throwable) {}
+                try { r.deleteDraftByTimestamp(chatId, draft.timestamp) } catch (_: Throwable) {}
                 Handler(Looper.getMainLooper()).post { loadDrafts() }
             }
         }

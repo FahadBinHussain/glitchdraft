@@ -207,6 +207,10 @@ class DraftRepository(private val context: Context) {
     // DELETE draft
     // -------------------------------------------------------------------------
 
+    /**
+     * Deletes the entire Firestore document for the given chat (removes ALL drafts).
+     * Prefer [deleteDraftByTimestamp] when only a single draft entry should be removed.
+     */
     suspend fun deleteDraft(chatId: String) = withContext(Dispatchers.IO) {
         val resolvedId = resolveMessengerId(chatId) ?: chatId
         val url = URL(docUrl("drafts/$resolvedId"))
@@ -215,6 +219,34 @@ class DraftRepository(private val context: Context) {
         conn.connectTimeout = 8000
         conn.readTimeout = 8000
         conn.responseCode
+    }
+
+    /**
+     * Removes only the single draft entry identified by [timestamp] from the
+     * messages array, then writes the updated list back to Firestore.
+     *
+     * If no drafts remain after the removal the whole document is deleted so
+     * the chat no longer appears in the drafts collection.
+     *
+     * This is the correct function to call from a per-row delete button —
+     * [deleteDraft] deletes the *entire document* (all drafts for the chat)
+     * and must NOT be used for single-entry deletion.
+     */
+    suspend fun deleteDraftByTimestamp(chatId: String, timestamp: Long) = withContext(Dispatchers.IO) {
+        val resolvedId = resolveMessengerId(chatId) ?: chatId
+        val existing = fetchDraftDoc(resolvedId) ?: emptyList()
+        val updated = existing.filter { it.timestamp != timestamp }
+        if (updated.isEmpty()) {
+            // No drafts left — remove the whole document to keep Firestore tidy
+            val url = URL(docUrl("drafts/$resolvedId"))
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "DELETE"
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            conn.responseCode
+        } else {
+            writeDraftDoc(resolvedId, updated)
+        }
     }
 
     // -------------------------------------------------------------------------
