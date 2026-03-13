@@ -2,6 +2,8 @@ package com.fahad.glitchdraft.lsposed.overlay
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -487,27 +489,155 @@ object OverlayController {
         r: DraftRepository
     ) {
         val ctx = container.context
-        val row = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(ctx, 4), dp(ctx, 6), dp(ctx, 4), dp(ctx, 6))
-            gravity = Gravity.CENTER_VERTICAL
+        val plainText = android.text.Html.fromHtml(draft.html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+
+        // ── Card wrapping all content for this draft ──────────────────────────
+        val card = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(ctx, 6), dp(ctx, 8), dp(ctx, 6), dp(ctx, 6))
         }
 
-        val text = TextView(ctx).apply {
-            this.text = android.text.Html.fromHtml(draft.html, android.text.Html.FROM_HTML_MODE_COMPACT)
+        // ── Display group (view mode) ─────────────────────────────────────────
+        val displayGroup = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+
+        val textView = TextView(ctx).apply {
+            text = android.text.Html.fromHtml(draft.html, android.text.Html.FROM_HTML_MODE_COMPACT)
             textSize = 13f
             setTextColor(Color.BLACK)
             maxLines = 3
+            setPadding(0, 0, 0, dp(ctx, 6))
         }
-        row.addView(text, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        displayGroup.addView(textView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
 
-        val delBtn = TextView(ctx).apply {
-            this.text = "🗑"
-            textSize = 16f
-            setPadding(dp(ctx, 8), 0, dp(ctx, 4), 0)
+        // Action buttons row: Use | Copy | Edit | Delete
+        val actionsRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
         }
-        row.addView(delBtn)
 
+        fun makeActionBtn(label: String, bgColor: Int): TextView = TextView(ctx).apply {
+            text = label
+            textSize = 11f
+            setTextColor(WHITE)
+            setPadding(dp(ctx, 7), dp(ctx, 4), dp(ctx, 7), dp(ctx, 4))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(bgColor)
+                cornerRadius = dp(ctx, 4).toFloat()
+            }
+        }
+
+        val useBtn  = makeActionBtn("Use",    ACCENT)
+        val copyBtn = makeActionBtn("Copy",   0xFF4CAF50.toInt())
+        val editBtn = makeActionBtn("Edit",   0xFF2196F3.toInt())
+        val delBtn  = makeActionBtn("Delete", 0xFFE74C3C.toInt())
+
+        fun btnLp() = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).also { it.marginEnd = dp(ctx, 5) }
+
+        actionsRow.addView(useBtn,  btnLp())
+        actionsRow.addView(copyBtn, btnLp())
+        actionsRow.addView(editBtn, btnLp())
+        actionsRow.addView(delBtn,  LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        displayGroup.addView(actionsRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        // ── Edit group (edit mode, initially hidden) ──────────────────────────
+        val editGroup = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+
+        val editInput = EditText(ctx).apply {
+            setText(plainText)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            maxLines = 6
+            setTextColor(Color.BLACK)
+            textSize = 13f
+            setPadding(dp(ctx, 6), dp(ctx, 6), dp(ctx, 6), dp(ctx, 6))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(WHITE)
+                cornerRadius = dp(ctx, 4).toFloat()
+                setStroke(1, 0xFFCCCCCC.toInt())
+            }
+        }
+        editGroup.addView(editInput, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        val editActionsRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(ctx, 6), 0, 0)
+        }
+        val saveEditBtn   = makeActionBtn("Save",   0xFF4CAF50.toInt())
+        val cancelEditBtn = makeActionBtn("Cancel", 0xFF888888.toInt())
+        editActionsRow.addView(saveEditBtn,   btnLp())
+        editActionsRow.addView(cancelEditBtn, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+        editGroup.addView(editActionsRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        card.addView(displayGroup, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+        card.addView(editGroup, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        val divider = View(ctx).apply { setBackgroundColor(0xFFE4E6EB.toInt()) }
+        container.addView(card, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+        container.addView(divider, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 1
+        ))
+
+        // ── Button listeners ──────────────────────────────────────────────────
+
+        // USE: try to inject plain text into the host app's message EditText,
+        //      fall back to clipboard copy if no suitable input is found.
+        useBtn.setOnClickListener {
+            val activity = panelView?.context as? Activity
+            val decorRoot = activity?.window?.decorView
+            val msgInput = decorRoot?.let { findMessageInput(it) }
+            if (msgInput != null) {
+                msgInput.setText(plainText)
+                msgInput.setSelection(msgInput.text.length)
+                msgInput.requestFocus()
+                togglePanel()   // close panel after injecting
+            } else {
+                // Fallback: put text on clipboard and toast
+                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                cm?.setPrimaryClip(ClipData.newPlainText("draft", plainText))
+                Toast.makeText(ctx, "Copied – paste in your message", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // COPY: always copy plain text to clipboard
+        copyBtn.setOnClickListener {
+            val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.setPrimaryClip(ClipData.newPlainText("draft", plainText))
+            Toast.makeText(ctx, "Draft copied to clipboard", Toast.LENGTH_SHORT).show()
+        }
+
+        // EDIT: switch to inline edit mode
+        editBtn.setOnClickListener {
+            displayGroup.visibility = View.GONE
+            editGroup.visibility = View.VISIBLE
+            editInput.requestFocus()
+        }
+
+        // DELETE: remove only this draft entry by timestamp
         delBtn.setOnClickListener {
             scope.launch {
                 try { r.deleteDraftByTimestamp(chatId, draft.timestamp) } catch (_: Throwable) {}
@@ -515,14 +645,49 @@ object OverlayController {
             }
         }
 
-        // Divider
-        val divider = View(ctx).apply { setBackgroundColor(0xFFE4E6EB.toInt()) }
-        container.addView(row, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
-        ))
-        container.addView(divider, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 1
-        ))
+        // SAVE EDIT: write updated html back to Firestore
+        saveEditBtn.setOnClickListener {
+            val newText = editInput.text.toString().trim()
+            if (newText.isEmpty()) return@setOnClickListener
+            val newHtml = newText.replace("\n", "<br>")
+            scope.launch {
+                try {
+                    r.editDraftByTimestamp(chatId, draft.timestamp, newHtml)
+                    Handler(Looper.getMainLooper()).post { loadDrafts() }
+                } catch (e: Throwable) {
+                    Handler(Looper.getMainLooper()).post {
+                        Toast.makeText(ctx, "Edit failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        }
+
+        // CANCEL EDIT: revert back to display mode
+        cancelEditBtn.setOnClickListener {
+            editGroup.visibility = View.GONE
+            displayGroup.visibility = View.VISIBLE
+        }
+    }
+
+    /**
+     * Walks the view hierarchy rooted at [root] and returns the first
+     * [EditText] that looks like a message-compose input (visible, enabled,
+     * focusable, not a password field).  Returns null if none is found.
+     */
+    private fun findMessageInput(root: View): EditText? {
+        if (root is EditText) {
+            val iType = root.inputType
+            val isPassword = (iType and InputType.TYPE_TEXT_VARIATION_PASSWORD) != 0 ||
+                             (iType and InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD) != 0
+            if (!isPassword && root.isShown && root.isEnabled && root.isFocusable) return root
+        }
+        if (root is ViewGroup) {
+            for (i in 0 until root.childCount) {
+                val found = findMessageInput(root.getChildAt(i))
+                if (found != null) return found
+            }
+        }
+        return null
     }
 
     private fun saveDraft(ctx: Context) {

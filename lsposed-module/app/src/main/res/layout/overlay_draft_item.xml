@@ -8,29 +8,140 @@
     android:padding="8dp"
     android:layout_marginBottom="8dp">
 
-    <TextView
-        android:id="@+id/tv_draft_content"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:textSize="13sp"
-        android:textColor="#1C1E21"
-        android:layout_marginBottom="6dp" />
-
+    <!-- Display group (view mode) -->
     <LinearLayout
+        android:id="@+id/group_display"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="end">
+        android:orientation="vertical">
 
         <TextView
-            android:id="@+id/btn_delete_draft"
-            android:layout_width="wrap_content"
+            android:id="@+id/tv_draft_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Delete"
-            android:textColor="#FFFFFF"
-            android:textSize="11sp"
-            android:background="#E74C3C"
-            android:padding="4dp" />
+            android:textSize="13sp"
+            android:textColor="#1C1E21"
+            android:maxLines="3"
+            android:layout_marginBottom="6dp" />
+
+        <!-- Action buttons: Use | Copy | Edit | Delete -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/btn_use_draft"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Use"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:background="#0084FF"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:id="@+id/btn_copy_draft"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Copy"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:background="#4CAF50"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:id="@+id/btn_edit_draft"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Edit"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:background="#2196F3"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:id="@+id/btn_delete_draft"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Delete"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:background="#E74C3C"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- Edit group (edit mode, initially hidden) -->
+    <LinearLayout
+        android:id="@+id/group_edit"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/et_edit_draft"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="textMultiLine"
+            android:maxLines="6"
+            android:textSize="13sp"
+            android:textColor="#1C1E21"
+            android:padding="6dp"
+            android:background="@android:drawable/edit_text" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginTop="6dp">
+
+            <TextView
+                android:id="@+id/btn_save_edit"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Save"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:background="#4CAF50"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:layout_marginEnd="5dp" />
+
+            <TextView
+                android:id="@+id/btn_cancel_edit"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Cancel"
+                android:textColor="#FFFFFF"
+                android:textSize="11sp"
+                android:background="#888888"
+                android:paddingStart="7dp"
+                android:paddingEnd="7dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp" />
+
+        </LinearLayout>
 
     </LinearLayout>
 

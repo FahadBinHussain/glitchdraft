@@ -222,6 +222,19 @@ class DraftRepository(private val context: Context) {
     }
 
     /**
+     * Updates only the single draft entry identified by [timestamp], replacing
+     * its html content with [newHtml].  All other entries are left unchanged.
+     */
+    suspend fun editDraftByTimestamp(chatId: String, timestamp: Long, newHtml: String) = withContext(Dispatchers.IO) {
+        val resolvedId = resolveMessengerId(chatId) ?: chatId
+        val existing = fetchDraftDoc(resolvedId) ?: emptyList()
+        val updated = existing.map { draft ->
+            if (draft.timestamp == timestamp) draft.copy(html = newHtml) else draft
+        }
+        writeDraftDoc(resolvedId, updated)
+    }
+
+    /**
      * Removes only the single draft entry identified by [timestamp] from the
      * messages array, then writes the updated list back to Firestore.
      *

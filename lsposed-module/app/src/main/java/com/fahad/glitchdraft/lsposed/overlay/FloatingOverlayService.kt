@@ -2,6 +2,9 @@ package com.fahad.glitchdraft.lsposed.overlay
 
 import android.annotation.SuppressLint
 import android.app.Service
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -14,6 +17,7 @@ import android.view.WindowManager
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import com.fahad.glitchdraft.lsposed.R
 import com.fahad.glitchdraft.lsposed.data.DraftRepository
 import kotlinx.coroutines.CoroutineScope
@@ -229,14 +233,62 @@ class FloatingOverlayService : Service() {
         chatId: String
     ) {
         val item = LayoutInflater.from(this).inflate(R.layout.overlay_draft_item, container, false)
+        val plainText = android.text.Html.fromHtml(draft.html, android.text.Html.FROM_HTML_MODE_COMPACT).toString()
+
         item.findViewById<TextView>(R.id.tv_draft_content)?.text =
             android.text.Html.fromHtml(draft.html, android.text.Html.FROM_HTML_MODE_COMPACT)
+
+        val displayGroup = item.findViewById<View>(R.id.group_display)
+        val editGroup    = item.findViewById<View>(R.id.group_edit)
+        val editInput    = item.findViewById<EditText>(R.id.et_edit_draft)
+
+        // USE: copy to clipboard (service runs in module process, cannot access target app views)
+        item.findViewById<View>(R.id.btn_use_draft)?.setOnClickListener {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.setPrimaryClip(ClipData.newPlainText("draft", plainText))
+            Toast.makeText(this, "Copied – paste in your message", Toast.LENGTH_SHORT).show()
+        }
+
+        // COPY: copy plain text to clipboard
+        item.findViewById<View>(R.id.btn_copy_draft)?.setOnClickListener {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.setPrimaryClip(ClipData.newPlainText("draft", plainText))
+            Toast.makeText(this, "Draft copied to clipboard", Toast.LENGTH_SHORT).show()
+        }
+
+        // EDIT: show edit group, hide display group
+        item.findViewById<View>(R.id.btn_edit_draft)?.setOnClickListener {
+            editInput?.setText(plainText)
+            displayGroup?.visibility = View.GONE
+            editGroup?.visibility = View.VISIBLE
+            editInput?.requestFocus()
+        }
+
+        // DELETE: remove only this draft by timestamp
         item.findViewById<View>(R.id.btn_delete_draft)?.setOnClickListener {
             serviceScope.launch {
                 repo.deleteDraftByTimestamp(chatId, draft.timestamp)
                 loadDraftsIntoPanel()
             }
         }
+
+        // SAVE EDIT: write updated html back to Firestore
+        item.findViewById<View>(R.id.btn_save_edit)?.setOnClickListener {
+            val newText = editInput?.text?.toString()?.trim() ?: return@setOnClickListener
+            if (newText.isEmpty()) return@setOnClickListener
+            val newHtml = newText.replace("\n", "<br>")
+            serviceScope.launch {
+                repo.editDraftByTimestamp(chatId, draft.timestamp, newHtml)
+                loadDraftsIntoPanel()
+            }
+        }
+
+        // CANCEL EDIT: revert to display mode
+        item.findViewById<View>(R.id.btn_cancel_edit)?.setOnClickListener {
+            editGroup?.visibility = View.GONE
+            displayGroup?.visibility = View.VISIBLE
+        }
+
         container.addView(item)
     }
 

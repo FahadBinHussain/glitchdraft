@@ -1,0 +1,1 @@
+﻿add the 4 actions of the extension, use, copy, edit and delete is already implemented
