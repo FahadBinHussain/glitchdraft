@@ -715,6 +715,30 @@ object OverlayController {
     }
 
     /**
+     * Walks [root] breadth-first and returns the first [View] that is visible,
+     * enabled, focusable, and has a non-null [android.view.inputmethod.InputConnection]
+     * (i.e. it accepts keyboard / rich input).  This finds Messenger's custom compose
+     * bar even when it is not a plain [android.widget.EditText].
+     */
+    private fun findAnyInputView(root: View): View? {
+        val queue = ArrayDeque<View>()
+        queue.add(root)
+        while (queue.isNotEmpty()) {
+            val v = queue.removeFirst()
+            if (v.isShown && v.isEnabled && v.isFocusable) {
+                try {
+                    val ic = v.onCreateInputConnection(android.view.inputmethod.EditorInfo())
+                    if (ic != null) return v
+                } catch (_: Throwable) {}
+            }
+            if (v is ViewGroup) {
+                for (i in 0 until v.childCount) queue.add(v.getChildAt(i))
+            }
+        }
+        return null
+    }
+
+    /**
      * Extracts all `src` attribute values from `<img>` tags in [html].
      */
     private fun extractImgSrcs(html: String): List<String> {
@@ -796,13 +820,102 @@ object OverlayController {
 
             contentUri?.let { uri ->
                 Handler(Looper.getMainLooper()).post {
+                    // 1. Set clipboard
                     val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                     cm?.setPrimaryClip(ClipData.newUri(ctx.contentResolver, "image", uri))
-                    val msg = if (srcList.size > 1)
-                        "Image 1/${srcList.size} in clipboard – long-press in message box to paste"
-                    else
-                        "Image in clipboard – long-press in message box to paste"
-                    Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+
+                    // 2. Auto-paste: close panel → re-focus compose bar → dispatch KEYCODE_PASTE
+                    //    through the Activity (exactly what the keyboard's paste button does).
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        val activity = panelView?.context as? Activity
+                        val imm = ctx.getSystemService(Context.INPUT_METHOD_SERVICE)
+                                as? android.view.inputmethod.InputMethodManager
+
+                        // Find the compose view and re-focus it so the Activity window is active
+                        val decorRoot = activity?.window?.decorView
+                        val composeView: View? = activity?.currentFocus
+                            ?: decorRoot?.let { findMessageInput(it) }
+
+                        XposedBridge.log("[GlitchDraft] autoPaste: composeView=${composeView?.javaClass?.name}")
+
+                        if (composeView != null) {
+                            composeView.requestFocus()
+                            // Ask the IME to (re-)attach to this view
+                            imm?.showSoftInput(composeView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                        }
+
+                        // Wait for IME to reconnect, then fire paste through the Activity —
+                        // Activity.dispatchKeyEvent routes to the currently-focused view,
+                        // which is exactly how the keyboard's paste button works.
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            var pasted = false
+
+                            // Method A: Activity.dispatchKeyEvent(KEYCODE_PASTE)
+                            //   Mirrors the keyboard paste button exactly.
+                            try {
+                                val down = android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_PASTE)
+                                val up   = android.view.KeyEvent(android.view.KeyEvent.ACTION_UP,   android.view.KeyEvent.KEYCODE_PASTE)
+                                val r1 = activity?.dispatchKeyEvent(down) ?: false
+                                val r2 = activity?.dispatchKeyEvent(up)   ?: false
+                                XposedBridge.log("[GlitchDraft] autoPaste: METHOD_A activity dispatch down=$r1 up=$r2")
+                                if (r1 || r2) pasted = true
+                            } catch (e: Throwable) {
+                                XposedBridge.log("[GlitchDraft] autoPaste: METHOD_A error: $e")
+                            }
+
+                            // Method B: AccessibilityNodeInfo ACTION_PASTE on the compose view
+                            if (!pasted && composeView != null) {
+                                try {
+                                    val result = composeView.performAccessibilityAction(
+                                        android.view.accessibility.AccessibilityNodeInfo.ACTION_PASTE, null
+                                    )
+                                    XposedBridge.log("[GlitchDraft] autoPaste: METHOD_B a11y result=$result")
+                                    if (result) pasted = true
+                                } catch (e: Throwable) {
+                                    XposedBridge.log("[GlitchDraft] autoPaste: METHOD_B error: $e")
+                                }
+                            }
+
+                            // Method C: onTextContextMenuItem(paste) for TextView / EditText
+                            if (!pasted && composeView is android.widget.TextView) {
+                                try {
+                                    composeView.onTextContextMenuItem(android.R.id.paste)
+                                    pasted = true
+                                    XposedBridge.log("[GlitchDraft] autoPaste: METHOD_C TextView paste fired")
+                                } catch (e: Throwable) {
+                                    XposedBridge.log("[GlitchDraft] autoPaste: METHOD_C error: $e")
+                                }
+                            }
+
+                            // Method D: IMM reflection — call performContextMenuAction on the
+                            //   active InputConnection stored inside InputMethodManager.
+                            if (!pasted && imm != null) {
+                                for (fieldName in listOf("mCurInputConnection", "mLastInputConnection", "mCurRootInputConnection")) {
+                                    try {
+                                        val f = android.view.inputmethod.InputMethodManager::class.java
+                                            .getDeclaredField(fieldName)
+                                        f.isAccessible = true
+                                        val ic = f.get(imm) as? android.view.inputmethod.InputConnection
+                                        if (ic != null) {
+                                            val r = ic.performContextMenuAction(android.R.id.paste)
+                                            XposedBridge.log("[GlitchDraft] autoPaste: METHOD_D field=$fieldName result=$r")
+                                            if (r) { pasted = true; break }
+                                        }
+                                    } catch (_: Throwable) {}
+                                }
+                            }
+
+                            XposedBridge.log("[GlitchDraft] autoPaste: final pasted=$pasted")
+
+                            if (!pasted) {
+                                val msg = if (srcList.size > 1)
+                                    "Image 1/${srcList.size} in clipboard – long-press in message box to paste"
+                                else
+                                    "Image in clipboard – long-press in message box to paste"
+                                Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+                            }
+                        }, 400L) // wait for IME to re-attach after showSoftInput
+                    }, 600L) // wait for panel to fully close and Activity window to regain focus
                 }
                 // Auto-delete after 2 minutes to keep gallery clean
                 Handler(Looper.getMainLooper()).postDelayed({
