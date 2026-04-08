@@ -1,1 +1,0 @@
-﻿ok, preview in ui working now, what caan we do about pasting? does android support pasting directly?

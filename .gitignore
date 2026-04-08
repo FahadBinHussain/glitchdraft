@@ -3,6 +3,7 @@ extension/key.pem
 # Extension - Node tooling
 extension/node_modules/
 extension/pnpm-lock.yaml
+extension-build.zip
 
 # LSPosed module - Android / Gradle build artifacts
 lsposed-module/.gradle/
@@ -33,3 +34,13 @@ lsposed-module/lint-results*
 .env
 **/.env
 *.json
+
+# Next backend
+next-backend/node_modules/
+next-backend/.next/
+next-backend/.vercel/
+next-backend/pnpm-lock.yaml
+backend/node_modules/
+backend/.next/
+backend/.vercel/
+backend/pnpm-lock.yaml

@@ -1,26 +1,56 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html>
 <head>
-    <title>GlitchDraft</title>
+    <title>GlitchDraft Settings</title>
     <meta charset="UTF-8">
     <style>
-        body { width: 400px; padding: 15px; font-family: sans-serif; }
-        h3 { margin: 0 0 10px 0; font-size: 16px; }
-        textarea { width: 100%; height: 150px; padding: 8px; border: 1px solid ddd; border-radius: 4px; font-family: monospace; font-size: 11px; resize: vertical; box-sizing: border-box; }
-        .button { background-color: 4285f4; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin: 5px 5px 5px 0; font-size: 14px; }
-        .button:hover { background-color: 3367d6; }
-        .status { margin-top: 10px; font-size: 12px; color: 666; }
-        .success { color: 4caf50; }
-        .error { color: f44336; }
-        .info { font-size: 11px; color: 666; margin: 5px 0; }
+        body { width: 420px; padding: 14px; font-family: sans-serif; }
+        h3 { margin: 0 0 8px 0; font-size: 16px; }
+        h4 { margin: 14px 0 6px 0; font-size: 13px; }
+        textarea, input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 12px;
+            box-sizing: border-box;
+        }
+        textarea { height: 120px; font-family: monospace; resize: vertical; }
+        .row { margin-top: 8px; }
+        .button { background-color: #4285f4; color: white; border: none; padding: 9px 14px; border-radius: 5px; cursor: pointer; margin: 6px 6px 0 0; font-size: 13px; }
+        .button:hover { background-color: #3367d6; }
+        .button.warn { background-color: #ff9800; }
+        .button.warn:hover { background-color: #ef8f00; }
+        .status { margin-top: 10px; font-size: 12px; color: #666; }
+        .success { color: #4caf50; }
+        .error { color: #f44336; }
+        .info { font-size: 11px; color: #666; margin: 5px 0; line-height: 1.4; }
     </style>
 </head>
 <body>
-    <h3>Firestore Configuration</h3>
-    <textarea id="configInput" placeholder="Paste Firebase config here"></textarea>
-    <div class="info">From Firebase Console: Register Web App then copy config</div>
-    <button id="saveConfigBtn" class="button">Save Config</button>
-    <button id="resetPositionBtn" class="button" style="background-color:ff9800">Reset UI</button>
+    <h3>GlitchDraft Backend Settings</h3>
+    <div class="info">
+        Priority rule: if Neon config is set, extension uses Neon. Otherwise if Firebase config is set, it uses Firebase.
+    </div>
+
+    <h4>Firebase Config (optional)</h4>
+    <textarea id="firebaseConfigInput" placeholder="Paste Firebase config JSON here"></textarea>
+    <div class="info">Keep this only if you want Firebase mode as fallback.</div>
+    <button id="saveFirebaseBtn" class="button">Save Firebase</button>
+
+    <h4>Neon Backend (recommended)</h4>
+    <div class="row">
+        <input id="neonApiBaseUrl" placeholder="https://your-backend.vercel.app" />
+    </div>
+    <div class="row">
+        <input id="neonApiKey" placeholder="API key (optional)" />
+    </div>
+    <button id="saveNeonBtn" class="button">Save Neon</button>
+
+    <div class="row">
+        <button id="resetPositionBtn" class="button warn">Reset UI</button>
+    </div>
+
     <div id="status" class="status"></div>
     <div class="info" style="margin-top:15px; font-size:10px">
         <strong>Supported sites:</strong><br>

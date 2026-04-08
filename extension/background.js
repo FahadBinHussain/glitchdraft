@@ -1,22 +1,34 @@
-// Import not needed - will load FirestoreService as global
-// Create instance after class is loaded
-self.importScripts('firestoreService.js');
+// Provider services loaded as globals in MV3 service worker context
+self.importScripts("firestoreService.js");
+self.importScripts("neonService.js");
+
 const firestoreService = new FirestoreService();
-let syncInProgress = false;
+const neonService = new NeonService();
+
+async function getActiveProvider() {
+    const data = await chrome.storage.local.get(["firebaseConfig", "neonConfig"]);
+    if (data.neonConfig && data.neonConfig.apiBaseUrl) return "neon";
+    if (data.firebaseConfig) return "firebase";
+    return null;
+}
+
+async function getService() {
+    const provider = await getActiveProvider();
+    if (provider === "neon") return { provider, service: neonService };
+    if (provider === "firebase") return { provider, service: firestoreService };
+    throw new Error("No backend configured. Set Firebase config or Neon config in extension settings.");
+}
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    console.log('[BACKGROUND] Message received:', request.action);
     if (request.action === "sync") {
         handleSync().then(sendResponse);
         return true;
     }
     if (request.action === "saveDraft") {
-        console.log('[BACKGROUND] Saving draft for chatId:', request.chatId, 'messages:', request.messages?.length, 'contactName:', request.contactName);
         handleUpload(request.chatId, request.messages, request.contactName).then(sendResponse);
         return true;
     }
     if (request.action === "getDraft") {
-        console.log('[BACKGROUND] Getting draft for chatId:', request.chatId);
         handleGet(request.chatId).then(sendResponse);
         return true;
     }
@@ -37,7 +49,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
     if (request.action === "renameDraft") {
-        firestoreService.renameDraft(request.fromId, request.toId, request.messages, request.contactName).then(() => sendResponse({ success: true })).catch(e => sendResponse({ success: false, message: e.message }));
+        handleRename(request.fromId, request.toId, request.messages, request.contactName).then(sendResponse);
         return true;
     }
     if (request.action === "getSettings") {
@@ -48,11 +60,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 async function handleGetStatus() {
     try {
-        const data = await chrome.storage.local.get(["firebaseConfig", "lastSyncTime"]);
+        const data = await chrome.storage.local.get(["firebaseConfig", "neonConfig", "lastSyncTime"]);
+        const hasNeon = !!(data.neonConfig && data.neonConfig.apiBaseUrl);
+        const hasFirebase = !!data.firebaseConfig;
+        const provider = hasNeon ? "neon" : (hasFirebase ? "firebase" : null);
+
         return {
             success: true,
-            authenticated: !!data.firebaseConfig,
-            message: data.firebaseConfig ? "Configured" : "Not configured",
+            authenticated: !!provider,
+            provider,
+            message: provider ? `Configured (${provider})` : "Not configured",
             lastSyncTime: data.lastSyncTime || null
         };
     } catch (error) {
@@ -62,7 +79,8 @@ async function handleGetStatus() {
 
 async function handleSaveSettings(settings) {
     try {
-        await firestoreService.saveSettings(settings);
+        const { service } = await getService();
+        await service.saveSettings(settings);
         return { success: true };
     } catch (error) {
         return { success: false, message: error.message };
@@ -71,7 +89,8 @@ async function handleSaveSettings(settings) {
 
 async function handleGetSettings() {
     try {
-        const settings = await firestoreService.getSettings();
+        const { service } = await getService();
+        const settings = await service.getSettings();
         return { success: true, settings };
     } catch (error) {
         return { success: false, message: error.message };
@@ -79,19 +98,19 @@ async function handleGetSettings() {
 }
 
 async function handleSync() {
-    console.log('[BACKGROUND] Sync requested');
-    return { success: true, message: "Using cloud storage only" };
+    return { success: true, message: "Using configured cloud backend" };
 }
 
 async function handleGet(chatId) {
     try {
-        const result = await firestoreService.getDraft(chatId);
+        const { service } = await getService();
+        const result = await service.getDraft(chatId);
         await chrome.storage.local.set({ lastSyncTime: Date.now() });
         return {
             success: true,
-            messages: result.messages,
-            contactName: result.contactName,
-            exists: result.exists,
+            messages: result.messages || [],
+            contactName: result.contactName || null,
+            exists: !!result.exists,
             needsRename: result.needsRename || false,
             renameFrom: result.renameFrom || null,
             renameTo: result.renameTo || null
@@ -102,35 +121,25 @@ async function handleGet(chatId) {
 }
 
 async function handleUpload(chatId, messages, contactName) {
-    console.log('[BACKGROUND] handleUpload called, chatId:', chatId, 'messages:', messages?.length, 'contactName:', contactName);
     try {
-        // If chatId is a bare numeric ID (legacy export format), try to find the matching
-        // messenger_web_ID_slug document in Firestore and import to that instead.
+        const { service } = await getService();
         let resolvedId = chatId;
         if (/^\d+$/.test(chatId)) {
-            const existing = await firestoreService.findDocByNumericId(chatId);
-            if (existing) {
-                resolvedId = existing;
-                console.log('[BACKGROUND] Resolved bare numeric ID', chatId, '→', resolvedId);
-            } else {
-                // No existing doc — prefix as messenger_web_{id} so it at least has the right prefix
-                resolvedId = `messenger_web_${chatId}`;
-                console.log('[BACKGROUND] No match found, using:', resolvedId);
-            }
+            const existing = await service.findDocByNumericId(chatId);
+            resolvedId = existing || `messenger_web_${chatId}`;
         }
-        await firestoreService.saveDraft(resolvedId, messages, contactName);
+        await service.saveDraft(resolvedId, messages, contactName);
         await chrome.storage.local.set({ lastSyncTime: Date.now() });
-        console.log('[BACKGROUND] Save successful');
         return { success: true };
     } catch (error) {
-        console.error('[BACKGROUND] Save error:', error);
         return { success: false, message: error.message };
     }
 }
 
 async function handleGetAllDrafts() {
     try {
-        const drafts = await firestoreService.getAllDrafts();
+        const { service } = await getService();
+        const drafts = await service.getAllDrafts();
         return { success: true, drafts };
     } catch (error) {
         return { success: false, message: error.message };
@@ -139,7 +148,18 @@ async function handleGetAllDrafts() {
 
 async function handleDelete(chatId) {
     try {
-        await firestoreService.deleteDraft(chatId);
+        const { service } = await getService();
+        await service.deleteDraft(chatId);
+        return { success: true };
+    } catch (error) {
+        return { success: false, message: error.message };
+    }
+}
+
+async function handleRename(fromId, toId, messages, contactName) {
+    try {
+        const { service } = await getService();
+        await service.renameDraft(fromId, toId, messages, contactName);
         return { success: true };
     } catch (error) {
         return { success: false, message: error.message };
