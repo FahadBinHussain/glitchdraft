@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 
 export function isAuthorized(req: NextRequest): boolean {
   const expected = process.env.API_KEY;
-  if (!expected) return true;
+  if (!expected || !expected.trim()) return false;
 
   const provided =
     req.headers.get("x-api-key") ??

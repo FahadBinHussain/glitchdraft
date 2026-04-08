@@ -65,9 +65,33 @@ async function handleGetStatus() {
         const hasFirebase = !!data.firebaseConfig;
         const provider = hasNeon ? "neon" : (hasFirebase ? "firebase" : null);
 
+        if (!provider) {
+            return {
+                success: true,
+                authenticated: false,
+                provider: null,
+                message: "Not configured",
+                lastSyncTime: data.lastSyncTime || null
+            };
+        }
+
+        // Real connectivity/auth check, so UI doesn't claim "connected" on config alone.
+        try {
+            const { service } = await getService();
+            await service.getSettings();
+        } catch (e) {
+            return {
+                success: true,
+                authenticated: false,
+                provider,
+                message: `Configured (${provider}) but unreachable: ${e.message}`,
+                lastSyncTime: data.lastSyncTime || null
+            };
+        }
+
         return {
             success: true,
-            authenticated: !!provider,
+            authenticated: true,
             provider,
             message: provider ? `Configured (${provider})` : "Not configured",
             lastSyncTime: data.lastSyncTime || null

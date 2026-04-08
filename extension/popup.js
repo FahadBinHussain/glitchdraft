@@ -1,7 +1,6 @@
 document.addEventListener("DOMContentLoaded", async () => {
     const firebaseConfigInput = document.getElementById("firebaseConfigInput");
-    const neonApiBaseUrl = document.getElementById("neonApiBaseUrl");
-    const neonApiKey = document.getElementById("neonApiKey");
+    const neonConfigInput = document.getElementById("neonConfigInput");
     const saveFirebaseBtn = document.getElementById("saveFirebaseBtn");
     const saveNeonBtn = document.getElementById("saveNeonBtn");
     const resetPositionBtn = document.getElementById("resetPositionBtn");
@@ -23,10 +22,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     saveNeonBtn.addEventListener("click", async () => {
         try {
-            const base = (neonApiBaseUrl.value || "").trim().replace(/\/+$/, "");
-            const key = (neonApiKey.value || "").trim();
-            if (!base) throw new Error("Neon API base URL is required");
+            const parsed = JSON.parse((neonConfigInput.value || "").trim() || "{}");
+            const base = (parsed.apiBaseUrl || "").trim().replace(/\/+$/, "");
+            const key = (parsed.apiKey || "").trim();
+
+            if (!base) throw new Error("neonConfig.apiBaseUrl is required");
+            if (/^postgres(ql)?:\/\//i.test(base)) {
+                throw new Error("This looks like a DB URL. Use backend API URL (e.g. http://localhost:3000) here.");
+            }
             if (!/^https?:\/\//i.test(base)) throw new Error("Neon API base URL must start with http:// or https://");
+            if (!key) throw new Error("neonConfig.apiKey is required");
             await chrome.storage.local.set({ neonConfig: { apiBaseUrl: base, apiKey: key } });
             showStatus("Neon config saved. Neon mode is now active.", "success");
         } catch (error) {
@@ -95,11 +100,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         if (data.neonConfig) {
-            neonApiBaseUrl.value = data.neonConfig.apiBaseUrl || "";
-            neonApiKey.value = data.neonConfig.apiKey || "";
+            neonConfigInput.value = JSON.stringify({
+                apiBaseUrl: data.neonConfig.apiBaseUrl || "",
+                apiKey: data.neonConfig.apiKey || ""
+            }, null, 2);
         } else {
-            neonApiBaseUrl.value = "";
-            neonApiKey.value = "";
+            neonConfigInput.value = "";
         }
     }
 

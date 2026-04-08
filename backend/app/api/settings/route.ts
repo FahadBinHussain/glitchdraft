@@ -41,9 +41,16 @@ export async function PUT(req: NextRequest) {
     uiPositions?: Record<string, unknown>;
     appConfig?: Record<string, unknown>;
   };
+  const existing = await db
+    .select()
+    .from(settings)
+    .where(eq(settings.id, SETTINGS_ID))
+    .limit(1);
+  const current = existing[0];
 
-  const uiPositions = body.uiPositions ?? {};
-  const appConfig = body.appConfig ?? {};
+  // Merge semantics: if caller omits a field, keep existing value.
+  const uiPositions = body.uiPositions ?? current?.uiPositions ?? {};
+  const appConfig = body.appConfig ?? current?.appConfig ?? {};
 
   await db
     .insert(settings)

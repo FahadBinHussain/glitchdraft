@@ -38,12 +38,13 @@
     <div class="info">Keep this only if you want Firebase mode as fallback.</div>
     <button id="saveFirebaseBtn" class="button">Save Firebase</button>
 
-    <h4>Neon Backend (recommended)</h4>
-    <div class="row">
-        <input id="neonApiBaseUrl" placeholder="https://your-backend.vercel.app" />
+    <h4>Backend API (Neon via your backend)</h4>
+    <div class="info">
+        Enter your backend URL here (example: <code>http://localhost:3000</code>).
+        Do NOT paste a Neon DB URL here. <strong>apiKey is required.</strong>
     </div>
     <div class="row">
-        <input id="neonApiKey" placeholder="API key (optional)" />
+        <textarea id="neonConfigInput" placeholder='{"apiBaseUrl":"http://localhost:3000","apiKey":"your_api_key"}'></textarea>
     </div>
     <button id="saveNeonBtn" class="button">Save Neon</button>
 

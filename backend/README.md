@@ -13,7 +13,7 @@ pnpm install
 Copy `.env.example` to `.env` and set:
 
 - `DATABASE_URL` from Neon
-- `API_KEY` (optional but recommended)
+- `API_KEY` (required)
 
 ## 3) Run migration
 
@@ -40,6 +40,6 @@ Health check:
 - `GET /api/settings` -> `{ success, settings: { uiPositions, appConfig } }`
 - `PUT /api/settings` body `{ uiPositions, appConfig }`
 
-If `API_KEY` is set, pass it as header:
+Pass `API_KEY` as header on every request:
 
 - `x-api-key: <API_KEY>`

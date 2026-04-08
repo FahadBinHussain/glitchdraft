@@ -1152,6 +1152,8 @@
     let isApplyingRemoteResize = false; // Prevent sync loop
     let localPositionDirty = false;    // Suppress remote position sync after local drag/resize
     let localPositionDirtyTimeout = null;
+    // Shared hash for local position-change detection in this content script.
+    let lastKnownPositionsHash = '';
     let lastSavedWidth = 0;
     let lastSavedHeight = 0;
     
@@ -1186,6 +1188,11 @@
                     // Get current settings from Firestore
                     chrome.runtime.sendMessage({ action: 'getSettings' }, (settingsResponse) => {
                         if (!settingsResponse || !settingsResponse.success) {
+                            showNotification(
+                                'Position load failed',
+                                settingsResponse?.message || 'getSettings failed',
+                                'error'
+                            );
                             localPositionDirty = false;
                             return;
                         }
@@ -1215,6 +1222,12 @@
                         chrome.runtime.sendMessage({ action: 'saveSettings', settings: { uiPositions } }, (response) => {
                             if (response && response.success) {
                                 showNotification('Window size saved!', '', 'success');
+                            } else {
+                                showNotification(
+                                    'Window size save failed',
+                                    response?.message || 'saveSettings failed',
+                                    'error'
+                                );
                             }
                             // Allow remote sync again after 3s grace period
                             localPositionDirtyTimeout = setTimeout(() => { localPositionDirty = false; }, 3000);
@@ -1339,7 +1352,10 @@
 
         // Update authentication status
         if (statusData.authenticated) {
-            syncStatusText.textContent = 'Connected to Firestore';
+            const providerLabel = statusData.provider === 'neon'
+                ? 'Neon'
+                : (statusData.provider === 'firebase' ? 'Firestore' : 'Backend');
+            syncStatusText.textContent = `Connected to ${providerLabel}`;
             syncStatusText.className = 'status success';
         } else {
             syncStatusText.textContent = 'Not configured';
@@ -1348,7 +1364,7 @@
             // Add config instruction if not configured
             const configNote = document.createElement('div');
             configNote.className = 'config-note';
-            configNote.textContent = 'Configure Firestore in extension popup';
+            configNote.textContent = 'Configure backend in extension popup';
             configNote.dataset.savedMessageUiElement = 'true';
             syncStatusSection.appendChild(configNote);
         }
@@ -1692,6 +1708,11 @@
                     // Get current settings from Firestore
                     chrome.runtime.sendMessage({ action: 'getSettings' }, (settingsResponse) => {
                         if (!settingsResponse || !settingsResponse.success) {
+                            showNotification(
+                                'Position load failed',
+                                settingsResponse?.message || 'getSettings failed',
+                                'error'
+                            );
                             localPositionDirty = false;
                             return;
                         }
@@ -1710,7 +1731,11 @@
                             if (response && response.success) {
                                 showNotification('Position & size saved!', '', 'success');
                             } else {
-                                console.error('Position save failed:', response?.message);
+                                showNotification(
+                                    'Position save failed',
+                                    response?.message || 'saveSettings failed',
+                                    'error'
+                                );
                             }
                             // Allow remote sync again after 3s grace period
                             localPositionDirtyTimeout = setTimeout(() => { localPositionDirty = false; }, 3000);
@@ -1792,6 +1817,11 @@
                     // Get current settings
                     chrome.runtime.sendMessage({ action: 'getSettings' }, (settingsResponse) => {
                         if (!settingsResponse || !settingsResponse.success) {
+                            showNotification(
+                                'Position load failed',
+                                settingsResponse?.message || 'getSettings failed',
+                                'error'
+                            );
                             localPositionDirty = false;
                             return;
                         }
@@ -1810,7 +1840,11 @@
                             if (response && response.success) {
                                 showNotification('Button position saved!', '', 'success');
                             } else {
-                                console.error('Position save failed:', response?.message);
+                                showNotification(
+                                    'Button position save failed',
+                                    response?.message || 'saveSettings failed',
+                                    'error'
+                                );
                             }
                             // Allow remote sync again after 3s grace period
                             localPositionDirtyTimeout = setTimeout(() => { localPositionDirty = false; }, 3000);
@@ -2111,7 +2145,19 @@
 
         chrome.runtime.sendMessage({ action: 'getDraft', chatId: chatId }, (response) => {
             if (!response || !response.success) {
-                ui.body.innerHTML = '<p>Error loading messages</p>';
+                const msg = response?.message || 'Error loading messages';
+                const escaped = String(msg).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                ui.body.innerHTML = `
+                    <div style="color:#b71c1c; font-size:12px; line-height:1.4;">
+                        <div><strong>Load failed</strong></div>
+                        <div style="margin-top:6px; white-space:pre-wrap;">${escaped}</div>
+                        <div style="margin-top:8px; color:#555;">
+                            Troubleshoot:
+                            <br>1) Ensure backend is running (try /api/health)
+                            <br>2) Neon config JSON uses apiBaseUrl + apiKey
+                            <br>3) Reload extension after settings/manifest changes
+                        </div>
+                    </div>`;
                 return;
             }
             

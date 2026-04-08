@@ -9,6 +9,7 @@
         "tabs"
     ],
     "host_permissions": [
+        "http://*/*",
         "https://firestore.googleapis.com/*",
         "https://*/*"
     ],

@@ -17,12 +17,32 @@ class NeonService {
     async request(path, options = {}) {
         const cfg = await this.getConfig();
         const base = cfg.apiBaseUrl.replace(/\/+$/, "");
+        const url = base + path;
         const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
         if (cfg.apiKey) headers["x-api-key"] = cfg.apiKey;
 
-        const response = await fetch(base + path, { ...options, headers });
+        let response;
+        try {
+            response = await fetch(url, { ...options, headers });
+        } catch (err) {
+            const reason = err?.message || "Unknown network error";
+            throw new Error(
+                `Neon request failed before response. URL=${url}. Reason=${reason}. ` +
+                `Check backend is running, API URL is correct, and extension host permissions allow this URL.`
+            );
+        }
+
         if (!response.ok) {
-            throw new Error(`Neon API failed: ${response.status}`);
+            let bodyText = "";
+            try {
+                bodyText = await response.text();
+            } catch (_) {
+                bodyText = "";
+            }
+            throw new Error(
+                `Neon API failed: HTTP ${response.status} at ${url}` +
+                (bodyText ? ` | ${bodyText.slice(0, 300)}` : "")
+            );
         }
         return response.status === 204 ? null : response.json();
     }
@@ -54,12 +74,17 @@ class NeonService {
     }
 
     async saveSettings(settings) {
+        const payload = {};
+        if (settings && Object.prototype.hasOwnProperty.call(settings, "uiPositions")) {
+            payload.uiPositions = settings.uiPositions;
+        }
+        if (settings && Object.prototype.hasOwnProperty.call(settings, "appConfig")) {
+            payload.appConfig = settings.appConfig;
+        }
+
         await this.request("/api/settings", {
             method: "PUT",
-            body: JSON.stringify({
-                uiPositions: settings.uiPositions || {},
-                appConfig: settings.appConfig || {}
-            })
+            body: JSON.stringify(payload)
         });
         return { success: true };
     }
