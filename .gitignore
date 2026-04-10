@@ -33,7 +33,6 @@ lsposed-module/lint-results*
 # Secrets / environment files - never commit credentials
 .env
 **/.env
-*.json
 
 # Next backend
 next-backend/node_modules/
@@ -44,3 +43,4 @@ backend/node_modules/
 backend/.next/
 backend/.vercel/
 backend/pnpm-lock.yaml
+extension/glitchdraft_export_1773331874468.json

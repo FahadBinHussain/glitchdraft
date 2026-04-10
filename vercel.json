@@ -1,0 +1,5 @@
+{
+  "installCommand": "cd backend && pnpm install",
+  "buildCommand": "cd backend && pnpm build",
+  "outputDirectory": "backend/.next"
+}
