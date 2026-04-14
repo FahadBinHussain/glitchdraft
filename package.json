@@ -1,0 +1,9 @@
+{
+  "name": "glitchdraft-monorepo",
+  "private": true,
+  "scripts": {
+    "android:run": "powershell -NoProfile -Command \"$gradle = Get-ChildItem -Path $env:USERPROFILE'\\\\.gradle\\\\wrapper\\\\dists' -Recurse -Filter gradle.bat | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName; if (-not $gradle) { throw 'No cached Gradle found in .gradle wrapper cache. Build any gradle project once or add gradlew wrapper files.' }; & $gradle -p lsposed-module installDebug; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; & 'C:\\\\Users\\\\Admin\\\\Downloads\\\\Softwares\\\\androidsdk\\\\platform-tools\\\\adb.exe' shell am start -n com.fahad.glitchdraft.lsposed/.ui.MainActivity\"",
+    "android:build:release": "powershell -NoProfile -Command \"$gradle = Get-ChildItem -Path $env:USERPROFILE'\\\\.gradle\\\\wrapper\\\\dists' -Recurse -Filter gradle.bat | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName; if (-not $gradle) { throw 'No cached Gradle found in .gradle wrapper cache. Build any gradle project once or add gradlew wrapper files.' }; & $gradle -p lsposed-module assembleRelease\"",
+    "android:release:apk": "powershell -NoProfile -Command \"$gradle = Get-ChildItem -Path $env:USERPROFILE'\\\\.gradle\\\\wrapper\\\\dists' -Recurse -Filter gradle.bat | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName; if (-not $gradle) { throw 'No cached Gradle found in .gradle wrapper cache. Build any gradle project once or add gradlew wrapper files.' }; & $gradle -p lsposed-module assembleRelease; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; Copy-Item -Path 'lsposed-module\\\\app\\\\build\\\\outputs\\\\apk\\\\release\\\\app-release.apk' -Destination 'backend\\\\public\\\\glitchdraft.apk' -Force\""
+  }
+}
