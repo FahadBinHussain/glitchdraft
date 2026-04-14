@@ -72,6 +72,12 @@
         });
     }
 
+    async function getNeonConfig() {
+        return new Promise(resolve => {
+            lsGet(['neonConfig'], result => resolve(result.neonConfig || null));
+        });
+    }
+
     function firestoreUrl(config, path) {
         return `https://firestore.googleapis.com/v1/projects/${config.projectId}/databases/(default)/documents/${path}?key=${config.apiKey}`;
     }
@@ -104,11 +110,44 @@
         if (!res.ok) throw new Error('Firestore DELETE failed: ' + res.status);
     }
 
+    async function neonRequest(path, method = 'GET', body) {
+        const config = await getNeonConfig();
+        if (!config?.apiBaseUrl || !config?.apiKey) throw new Error('Neon config not set');
+        if (String(config.apiBaseUrl).startsWith('postgresql://')) {
+            throw new Error('Use backend API URL, not postgresql:// connection string');
+        }
+        const url = String(config.apiBaseUrl).replace(/\/+$/, '') + path;
+        const res = await fetch(url, {
+            method,
+            headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': config.apiKey
+            },
+            body: body ? JSON.stringify(body) : undefined
+        });
+        if (!res.ok) {
+            const txt = await res.text().catch(() => '');
+            throw new Error(`Neon ${method} failed (${res.status}): ${txt.slice(0, 180) || 'No response body'}`);
+        }
+        if (res.status === 204) return null;
+        return res.json().catch(() => ({}));
+    }
+
     // -------------------------------------------------------------------------
     // Background handler functions (inline replacement for background.js)
     // -------------------------------------------------------------------------
 
     async function handleSaveDraft(chatId, messages) {
+        const neon = await getNeonConfig();
+        if (neon?.apiBaseUrl && neon?.apiKey) {
+            await neonRequest(`/api/drafts/${encodeURIComponent(chatId)}`, 'PUT', {
+                messages: Array.isArray(messages) ? messages : [],
+                contactName: null
+            });
+            lsSet({ lastSyncTime: Date.now() }, null);
+            return { success: true };
+        }
+
         const msgsArray = messages.map(m => ({
             mapValue: {
                 fields: {
@@ -128,6 +167,14 @@
     }
 
     async function handleGetDraft(chatId) {
+        const neon = await getNeonConfig();
+        if (neon?.apiBaseUrl && neon?.apiKey) {
+            const res = await neonRequest(`/api/drafts/${encodeURIComponent(chatId)}`, 'GET');
+            const messages = Array.isArray(res?.messages) ? res.messages : [];
+            lsSet({ lastSyncTime: Date.now() }, null);
+            return { success: true, messages };
+        }
+
         const doc = await fsGet(`drafts/${chatId}`);
         if (!doc) return { success: true, messages: [] };
         const messages = (doc.fields?.messages?.arrayValue?.values || []).map(v => ({
@@ -139,11 +186,24 @@
     }
 
     async function handleDeleteDraft(chatId) {
+        const neon = await getNeonConfig();
+        if (neon?.apiBaseUrl && neon?.apiKey) {
+            await neonRequest(`/api/drafts/${encodeURIComponent(chatId)}`, 'DELETE');
+            return { success: true };
+        }
         await fsDelete(`drafts/${chatId}`);
         return { success: true };
     }
 
     async function handleSaveSettings(settings) {
+        const neon = await getNeonConfig();
+        if (neon?.apiBaseUrl && neon?.apiKey) {
+            await neonRequest('/api/settings', 'PUT', {
+                uiPositions: settings.uiPositions || {}
+            });
+            return { success: true };
+        }
+
         await fsPatch('settings/user', {
             fields: {
                 uiPositions: { stringValue: JSON.stringify(settings.uiPositions || {}) }
@@ -153,6 +213,13 @@
     }
 
     async function handleGetSettings() {
+        const neon = await getNeonConfig();
+        if (neon?.apiBaseUrl && neon?.apiKey) {
+            const res = await neonRequest('/api/settings', 'GET');
+            const uiPositions = res?.settings?.uiPositions || {};
+            return { success: true, settings: { uiPositions } };
+        }
+
         const doc = await fsGet('settings/user');
         if (!doc) return { success: true, settings: { uiPositions: {} } };
         const uiPositions = JSON.parse(doc.fields?.uiPositions?.stringValue || '{}');
@@ -160,13 +227,16 @@
     }
 
     async function handleGetSyncStatus() {
-        const config = await getFirebaseConfig();
+        const neonConfig = await getNeonConfig();
+        const firebaseConfig = await getFirebaseConfig();
+        const hasNeon = !!(neonConfig?.apiBaseUrl && neonConfig?.apiKey);
+        const hasFirebase = !!firebaseConfig;
         return new Promise(resolve => {
             lsGet(['lastSyncTime'], result => {
                 resolve({
                     success: true,
-                    authenticated: !!config,
-                    message: config ? 'Configured' : 'Not configured',
+                    authenticated: hasNeon || hasFirebase,
+                    message: hasNeon ? 'Connected to Neon' : (hasFirebase ? 'Connected to Firestore' : 'Not configured'),
                     lastSyncTime: result.lastSyncTime || null
                 });
             });

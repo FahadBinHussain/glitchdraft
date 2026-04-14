@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -11,11 +11,10 @@
         android:orientation="vertical"
         android:gravity="center_horizontal">
 
-        <!-- Logo / Title -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="📝 GlitchDraft"
+            android:text="GlitchDraft"
             android:textSize="28sp"
             android:textStyle="bold"
             android:textColor="#0084FF"
@@ -29,7 +28,6 @@
             android:textColor="#65676B"
             android:layout_marginBottom="24dp" />
 
-        <!-- Status banner -->
         <TextView
             android:id="@+id/tv_status"
             android:layout_width="match_parent"
@@ -39,7 +37,6 @@
             android:background="#FFF3E0"
             android:layout_marginBottom="24dp" />
 
-        <!-- Firebase JSON config card -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -60,7 +57,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Paste the same Firebase config JSON object you use in the browser extension popup."
+                android:text="Paste Firebase config JSON (apiKey + projectId required)."
                 android:textSize="12sp"
                 android:textColor="#65676B"
                 android:layout_marginBottom="12dp" />
@@ -84,14 +81,65 @@
                 android:id="@+id/btn_save"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Save Configuration"
+                android:text="Save Firebase"
                 android:backgroundTint="#0084FF"
                 android:textColor="#FFFFFF"
                 android:textSize="14sp" />
 
         </LinearLayout>
 
-        <!-- How it works -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#FFFFFF"
+            android:padding="16dp"
+            android:elevation="2dp"
+            android:layout_marginTop="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Neon Backend Configuration"
+                android:textStyle="bold"
+                android:textSize="16sp"
+                android:textColor="#1C1E21"
+                android:layout_marginBottom="4dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Paste JSON with apiBaseUrl and apiKey. Do not paste postgresql URL."
+                android:textSize="12sp"
+                android:textColor="#65676B"
+                android:layout_marginBottom="12dp" />
+
+            <EditText
+                android:id="@+id/et_neon_config"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="{ &quot;apiBaseUrl&quot;: &quot;https://your-backend.vercel.app&quot;, &quot;apiKey&quot;: &quot;secret&quot; }"
+                android:inputType="textMultiLine"
+                android:minLines="4"
+                android:maxLines="10"
+                android:gravity="top|start"
+                android:fontFamily="monospace"
+                android:textSize="12sp"
+                android:layout_marginBottom="16dp"
+                android:background="@android:color/white"
+                android:padding="8dp" />
+
+            <Button
+                android:id="@+id/btn_save_neon"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Save Neon"
+                android:backgroundTint="#00A65A"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp" />
+
+        </LinearLayout>
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -113,7 +161,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="1. Enable this module in LSPosed Manager\n2. Select the target apps in the module scope (Messenger, WhatsApp, Discord, Chrome…)\n3. Paste your Firebase JSON config above and tap Save\n4. Grant the &#34;Display over other apps&#34; permission when prompted\n5. Force-stop the target apps\n6. Open any supported messaging site — the GlitchDraft 📝 floating icon will appear"
+                android:text="1. Enable this module in LSPosed Manager&#10;2. Select target apps in module scope (Messenger, WhatsApp, Discord, Chrome...)&#10;3. Configure either Firebase or Neon backend above&#10;4. Grant the Display over other apps permission when prompted&#10;5. Force-stop target apps&#10;6. Open supported messaging app/site and GlitchDraft floating icon will appear"
                 android:textSize="13sp"
                 android:textColor="#444444"
                 android:lineSpacingExtra="4dp" />
@@ -122,4 +170,3 @@
 
     </LinearLayout>
 </ScrollView>
-

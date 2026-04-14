@@ -1,7 +1,6 @@
-package com.fahad.glitchdraft.lsposed.data
+﻿package com.fahad.glitchdraft.lsposed.data
 
 import android.content.Context
-import android.net.Uri
 import com.fahad.glitchdraft.lsposed.provider.ConfigProvider
 import de.robv.android.xposed.XposedBridge
 import kotlinx.coroutines.Dispatchers
@@ -11,17 +10,8 @@ import org.json.JSONObject
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 
-/**
- * DraftRepository
- *
- * Kotlin port of firestoreService.js + background.js.
- * Used by OverlayController to read/write Firestore drafts from the
- * native overlay panel.
- *
- * Firebase credentials are fetched via ConfigProvider — a ContentProvider
- * in the module APK that serves the config cross-process.
- */
 class DraftRepository(private val context: Context) {
 
     data class Draft(val html: String, val timestamp: Long)
@@ -30,13 +20,12 @@ class DraftRepository(private val context: Context) {
         private const val FS_BASE = "https://firestore.googleapis.com/v1/projects"
     }
 
-    /**
-     * Fetches Firebase credentials from the module's ContentProvider.
-     * Works cross-process (e.g. when called from inside Messenger's process).
-     */
-    private data class FirebaseConfig(val projectId: String, val apiKey: String)
+    private sealed class StorageConfig {
+        data class Firebase(val projectId: String, val apiKey: String) : StorageConfig()
+        data class Neon(val apiBaseUrl: String, val apiKey: String) : StorageConfig()
+    }
 
-    private fun readConfig(): FirebaseConfig? {
+    private fun readConfig(): StorageConfig? {
         return try {
             val cursor = context.contentResolver.query(
                 ConfigProvider.CONTENT_URI, null, null, null, null
@@ -44,54 +33,101 @@ class DraftRepository(private val context: Context) {
 
             cursor.use {
                 if (!it.moveToFirst()) return null
+
+                val neonBaseUrl = runCatching {
+                    val idx = it.getColumnIndexOrThrow(ConfigProvider.COL_NEON_API_BASE_URL)
+                    it.getString(idx)
+                }.getOrDefault("").orEmpty().trim().trimEnd('/')
+
+                val neonApiKey = runCatching {
+                    val idx = it.getColumnIndexOrThrow(ConfigProvider.COL_NEON_API_KEY)
+                    it.getString(idx)
+                }.getOrDefault("").orEmpty().trim()
+
+                if (neonBaseUrl.isNotBlank() && neonApiKey.isNotBlank()) {
+                    return StorageConfig.Neon(neonBaseUrl, neonApiKey)
+                }
+
                 val pid = it.getString(it.getColumnIndexOrThrow(ConfigProvider.COL_PROJECT_ID))
                 val key = it.getString(it.getColumnIndexOrThrow(ConfigProvider.COL_API_KEY))
                 if (pid.isNullOrBlank() || key.isNullOrBlank()) null
-                else FirebaseConfig(pid, key)
+                else StorageConfig.Firebase(pid, key)
             }
         } catch (_: Throwable) {
             null
         }
     }
 
-    private fun docUrl(path: String): String {
-        val cfg = readConfig() ?: throw IllegalStateException("Firebase config not set — open GlitchDraft app and paste your Firebase JSON")
-        return "$FS_BASE/${cfg.projectId}/databases/(default)/documents/$path?key=${cfg.apiKey}"
+    private fun docUrl(firebase: StorageConfig.Firebase, path: String): String {
+        return "$FS_BASE/${firebase.projectId}/databases/(default)/documents/$path?key=${firebase.apiKey}"
     }
 
-    // -------------------------------------------------------------------------
-    // GET draft
-    // -------------------------------------------------------------------------
+    private fun neonUrl(neon: StorageConfig.Neon, path: String): String {
+        return "${neon.apiBaseUrl}$path"
+    }
+
+    private fun openNeonConnection(neon: StorageConfig.Neon, path: String, method: String): HttpURLConnection {
+        val conn = URL(neonUrl(neon, path)).openConnection() as HttpURLConnection
+        conn.requestMethod = method
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("x-api-key", neon.apiKey)
+        conn.connectTimeout = 10000
+        conn.readTimeout = 10000
+        return conn
+    }
+
+    private fun encodeThreadId(threadId: String): String {
+        return URLEncoder.encode(threadId, "UTF-8").replace("+", "%20")
+    }
 
     suspend fun getDraft(chatId: String): List<Draft> = withContext(Dispatchers.IO) {
-        // ── For messenger threads: match by name slug across platforms ──
-        // Web:     "messenger_web_7990669924323622_cat_fren"
-        // Android: "messenger_android_410625006_cat_fren"
-        // → extract name slug, list all docs, find any messenger_* doc with same slug
+        when (val cfg = readConfig()) {
+            is StorageConfig.Neon -> getDraftFromNeon(cfg, chatId)
+            is StorageConfig.Firebase -> getDraftFromFirebase(cfg, chatId)
+            null -> emptyList()
+        }
+    }
+
+    private fun getDraftFromFirebase(cfg: StorageConfig.Firebase, chatId: String): List<Draft> {
         val nameSlugMatch = Regex("^messenger_(?:web|android)_\\d+_(.+)$").find(chatId)
         if (nameSlugMatch != null) {
             val nameSlug = nameSlugMatch.groupValues[1]
-            val allDocs = listAllDraftIds()
-            // Find any messenger doc (web or android) whose ID ends with "_nameSlug"
+            val allDocs = listAllDraftIdsFirebase(cfg)
             val matchedId = allDocs.firstOrNull { docId ->
                 docId.matches(Regex("^messenger_(web|android)_.*")) && docId.endsWith("_$nameSlug")
             }
             if (matchedId != null) {
-                XposedBridge.log("[DraftRepo] Name-slug match: $chatId → $matchedId")
-                val result = fetchDraftDoc(matchedId)
-                if (result != null) return@withContext result
+                XposedBridge.log("[DraftRepo] Name-slug match: $chatId -> $matchedId")
+                val result = fetchDraftDocFirebase(cfg, matchedId)
+                if (result != null) return result
             }
-            return@withContext emptyList()
+            return emptyList()
         }
 
-        // ── Non-messenger or no-slug messenger: exact match ──
-        fetchDraftDoc(chatId) ?: emptyList()
+        return fetchDraftDocFirebase(cfg, chatId) ?: emptyList()
     }
 
-    /** Fetches a single draft doc by ID, returns null on 404 or error. */
-    private fun fetchDraftDoc(chatId: String): List<Draft>? {
+    private fun getDraftFromNeon(cfg: StorageConfig.Neon, chatId: String): List<Draft> {
+        val nameSlugMatch = Regex("^messenger_(?:web|android)_\\d+_(.+)$").find(chatId)
+        if (nameSlugMatch != null) {
+            val nameSlug = nameSlugMatch.groupValues[1]
+            val allIds = listAllDraftIdsNeon(cfg)
+            val matchedId = allIds.firstOrNull { docId ->
+                docId.matches(Regex("^messenger_(web|android)_.*")) && docId.endsWith("_$nameSlug")
+            }
+            if (matchedId != null) {
+                val result = fetchDraftDocNeon(cfg, matchedId)
+                if (result != null) return result
+            }
+            return emptyList()
+        }
+
+        return fetchDraftDocNeon(cfg, chatId) ?: emptyList()
+    }
+
+    private fun fetchDraftDocFirebase(cfg: StorageConfig.Firebase, chatId: String): List<Draft>? {
         return try {
-            val url = URL(docUrl("drafts/$chatId"))
+            val url = URL(docUrl(cfg, "drafts/$chatId"))
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.connectTimeout = 8000
@@ -101,14 +137,27 @@ class DraftRepository(private val context: Context) {
             if (conn.responseCode != 200) return null
 
             val body = conn.inputStream.bufferedReader().readText()
-            parseDraftMessages(JSONObject(body))
-        } catch (_: Throwable) { null }
+            parseDraftMessagesFromFirestore(JSONObject(body))
+        } catch (_: Throwable) {
+            null
+        }
     }
 
-    /** Lists all document IDs in the drafts collection. */
-    private fun listAllDraftIds(): List<String> {
+    private fun fetchDraftDocNeon(cfg: StorageConfig.Neon, chatId: String): List<Draft>? {
         return try {
-            val cfg = readConfig() ?: return emptyList()
+            val conn = openNeonConnection(cfg, "/api/drafts/${encodeThreadId(chatId)}", "GET")
+            if (conn.responseCode == 404) return null
+            if (conn.responseCode != 200) return null
+            val body = JSONObject(conn.inputStream.bufferedReader().readText())
+            if (!body.optBoolean("success", false)) return null
+            parseDraftMessagesFromNeon(body)
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun listAllDraftIdsFirebase(cfg: StorageConfig.Firebase): List<String> {
+        return try {
             val listUrl = URL("$FS_BASE/${cfg.projectId}/databases/(default)/documents/drafts?key=${cfg.apiKey}")
             val conn = listUrl.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
@@ -125,11 +174,25 @@ class DraftRepository(private val context: Context) {
                 if (name.isNotBlank()) ids.add(name.substringAfterLast('/'))
             }
             ids
-        } catch (_: Throwable) { emptyList() }
+        } catch (_: Throwable) {
+            emptyList()
+        }
     }
 
-    /** Parses draft messages from a Firestore document JSON. */
-    private fun parseDraftMessages(doc: JSONObject): List<Draft> {
+    private fun listAllDraftIdsNeon(cfg: StorageConfig.Neon): List<String> {
+        return try {
+            val conn = openNeonConnection(cfg, "/api/drafts", "GET")
+            if (conn.responseCode != 200) return emptyList()
+            val body = JSONObject(conn.inputStream.bufferedReader().readText())
+            if (!body.optBoolean("success", false)) return emptyList()
+            val draftsObj = body.optJSONObject("drafts") ?: return emptyList()
+            draftsObj.keys().asSequence().toList()
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    private fun parseDraftMessagesFromFirestore(doc: JSONObject): List<Draft> {
         val values = doc.optJSONObject("fields")
             ?.optJSONObject("messages")
             ?.optJSONObject("arrayValue")
@@ -146,29 +209,52 @@ class DraftRepository(private val context: Context) {
         return list
     }
 
-    // -------------------------------------------------------------------------
-    // SAVE draft
-    // -------------------------------------------------------------------------
-
-    suspend fun saveDraft(chatId: String, messages: List<Draft>) = withContext(Dispatchers.IO) {
-        // For messenger: resolve to the canonical doc ID (may be web or android platform)
-        val resolvedId = resolveMessengerId(chatId) ?: chatId
-        writeDraftDoc(resolvedId, messages)
+    private fun parseDraftMessagesFromNeon(doc: JSONObject): List<Draft> {
+        val values = doc.optJSONArray("messages") ?: return emptyList()
+        val list = mutableListOf<Draft>()
+        for (i in 0 until values.length()) {
+            val item = values.optJSONObject(i) ?: continue
+            val html = item.optString("html", "")
+            val ts = item.optLong("timestamp", 0L)
+            list.add(Draft(html = html, timestamp = ts))
+        }
+        return list
     }
 
-    /** For messenger thread IDs with a name slug, finds the existing doc (any platform) to write to.
-     *  Returns null for non-messenger IDs or when no existing doc found (will create new). */
-    private fun resolveMessengerId(chatId: String): String? {
+    suspend fun saveDraft(chatId: String, messages: List<Draft>) = withContext(Dispatchers.IO) {
+        when (val cfg = readConfig()) {
+            is StorageConfig.Neon -> {
+                val resolvedId = resolveMessengerIdNeon(cfg, chatId) ?: chatId
+                writeDraftDocNeon(cfg, resolvedId, messages)
+            }
+            is StorageConfig.Firebase -> {
+                val resolvedId = resolveMessengerIdFirebase(cfg, chatId) ?: chatId
+                writeDraftDocFirebase(cfg, resolvedId, messages)
+            }
+            null -> Unit
+        }
+    }
+
+    private fun resolveMessengerIdFirebase(cfg: StorageConfig.Firebase, chatId: String): String? {
         val nameSlugMatch = Regex("^messenger_(?:web|android)_\\d+_(.+)$").find(chatId) ?: return null
         val nameSlug = nameSlugMatch.groupValues[1]
-        val allDocs = listAllDraftIds()
+        val allDocs = listAllDraftIdsFirebase(cfg)
         return allDocs.firstOrNull { docId ->
             docId.matches(Regex("^messenger_(web|android)_.*")) && docId.endsWith("_$nameSlug")
         }
     }
 
-    private fun writeDraftDoc(chatId: String, messages: List<Draft>) {
-        val url = URL(docUrl("drafts/$chatId"))
+    private fun resolveMessengerIdNeon(cfg: StorageConfig.Neon, chatId: String): String? {
+        val nameSlugMatch = Regex("^messenger_(?:web|android)_\\d+_(.+)$").find(chatId) ?: return null
+        val nameSlug = nameSlugMatch.groupValues[1]
+        val allDocs = listAllDraftIdsNeon(cfg)
+        return allDocs.firstOrNull { docId ->
+            docId.matches(Regex("^messenger_(web|android)_.*")) && docId.endsWith("_$nameSlug")
+        }
+    }
+
+    private fun writeDraftDocFirebase(cfg: StorageConfig.Firebase, chatId: String, messages: List<Draft>) {
+        val url = URL(docUrl(cfg, "drafts/$chatId"))
         val conn = url.openConnection() as HttpURLConnection
         conn.requestMethod = "PATCH"
         conn.setRequestProperty("Content-Type", "application/json")
@@ -200,105 +286,136 @@ class DraftRepository(private val context: Context) {
         }
 
         OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
-        conn.responseCode // trigger the request
-    }
-
-    // -------------------------------------------------------------------------
-    // DELETE draft
-    // -------------------------------------------------------------------------
-
-    /**
-     * Deletes the entire Firestore document for the given chat (removes ALL drafts).
-     * Prefer [deleteDraftByTimestamp] when only a single draft entry should be removed.
-     */
-    suspend fun deleteDraft(chatId: String) = withContext(Dispatchers.IO) {
-        val resolvedId = resolveMessengerId(chatId) ?: chatId
-        val url = URL(docUrl("drafts/$resolvedId"))
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "DELETE"
-        conn.connectTimeout = 8000
-        conn.readTimeout = 8000
         conn.responseCode
     }
 
-    /**
-     * Updates only the single draft entry identified by [timestamp], replacing
-     * its html content with [newHtml].  All other entries are left unchanged.
-     */
+    private fun writeDraftDocNeon(cfg: StorageConfig.Neon, chatId: String, messages: List<Draft>) {
+        val conn = openNeonConnection(cfg, "/api/drafts/${encodeThreadId(chatId)}", "PUT")
+        conn.doOutput = true
+
+        val msgsArray = JSONArray()
+        messages.forEach { m ->
+            msgsArray.put(JSONObject().apply {
+                put("html", m.html)
+                put("timestamp", m.timestamp)
+            })
+        }
+
+        val body = JSONObject().apply {
+            put("messages", msgsArray)
+            put("contactName", JSONObject.NULL)
+        }
+
+        OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+        conn.responseCode
+    }
+
+    suspend fun deleteDraft(chatId: String) = withContext(Dispatchers.IO) {
+        when (val cfg = readConfig()) {
+            is StorageConfig.Neon -> {
+                val resolvedId = resolveMessengerIdNeon(cfg, chatId) ?: chatId
+                val conn = openNeonConnection(cfg, "/api/drafts/${encodeThreadId(resolvedId)}", "DELETE")
+                conn.responseCode
+            }
+            is StorageConfig.Firebase -> {
+                val resolvedId = resolveMessengerIdFirebase(cfg, chatId) ?: chatId
+                val url = URL(docUrl(cfg, "drafts/$resolvedId"))
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "DELETE"
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+                conn.responseCode
+            }
+            null -> Unit
+        }
+    }
+
     suspend fun editDraftByTimestamp(chatId: String, timestamp: Long, newHtml: String) = withContext(Dispatchers.IO) {
-        val resolvedId = resolveMessengerId(chatId) ?: chatId
-        val existing = fetchDraftDoc(resolvedId) ?: emptyList()
+        val existing = getDraft(chatId)
         val updated = existing.map { draft ->
             if (draft.timestamp == timestamp) draft.copy(html = newHtml) else draft
         }
-        writeDraftDoc(resolvedId, updated)
+        saveDraft(chatId, updated)
     }
 
-    /**
-     * Removes only the single draft entry identified by [timestamp] from the
-     * messages array, then writes the updated list back to Firestore.
-     *
-     * If no drafts remain after the removal the whole document is deleted so
-     * the chat no longer appears in the drafts collection.
-     *
-     * This is the correct function to call from a per-row delete button —
-     * [deleteDraft] deletes the *entire document* (all drafts for the chat)
-     * and must NOT be used for single-entry deletion.
-     */
     suspend fun deleteDraftByTimestamp(chatId: String, timestamp: Long) = withContext(Dispatchers.IO) {
-        val resolvedId = resolveMessengerId(chatId) ?: chatId
-        val existing = fetchDraftDoc(resolvedId) ?: emptyList()
+        val existing = getDraft(chatId)
         val updated = existing.filter { it.timestamp != timestamp }
         if (updated.isEmpty()) {
-            // No drafts left — remove the whole document to keep Firestore tidy
-            val url = URL(docUrl("drafts/$resolvedId"))
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "DELETE"
-            conn.connectTimeout = 8000
-            conn.readTimeout = 8000
-            conn.responseCode
+            deleteDraft(chatId)
         } else {
-            writeDraftDoc(resolvedId, updated)
+            saveDraft(chatId, updated)
         }
     }
 
-    // -------------------------------------------------------------------------
-    // GET / SAVE settings (UI positions)
-    // -------------------------------------------------------------------------
-
     suspend fun getSettings(): JSONObject = withContext(Dispatchers.IO) {
-        val url = URL(docUrl("settings/user"))
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "GET"
-        conn.connectTimeout = 8000
-        conn.readTimeout = 8000
+        when (val cfg = readConfig()) {
+            is StorageConfig.Neon -> {
+                try {
+                    val conn = openNeonConnection(cfg, "/api/settings", "GET")
+                    if (conn.responseCode != 200) return@withContext JSONObject()
+                    val body = JSONObject(conn.inputStream.bufferedReader().readText())
+                    val settings = body.optJSONObject("settings") ?: return@withContext JSONObject()
+                    val uiPositions = settings.optJSONObject("uiPositions") ?: JSONObject()
+                    return@withContext uiPositions
+                } catch (_: Throwable) {
+                    return@withContext JSONObject()
+                }
+            }
+            is StorageConfig.Firebase -> {
+                try {
+                    val url = URL(docUrl(cfg, "settings/user"))
+                    val conn = url.openConnection() as HttpURLConnection
+                    conn.requestMethod = "GET"
+                    conn.connectTimeout = 8000
+                    conn.readTimeout = 8000
 
-        if (conn.responseCode == 404) return@withContext JSONObject()
-        if (conn.responseCode != 200) return@withContext JSONObject()
+                    if (conn.responseCode == 404) return@withContext JSONObject()
+                    if (conn.responseCode != 200) return@withContext JSONObject()
 
-        val body = conn.inputStream.bufferedReader().readText()
-        val doc = JSONObject(body)
-        val raw = doc.optJSONObject("fields")
-            ?.optJSONObject("uiPositions")
-            ?.optString("stringValue", "{}") ?: "{}"
-        JSONObject(raw)
+                    val body = conn.inputStream.bufferedReader().readText()
+                    val doc = JSONObject(body)
+                    val raw = doc.optJSONObject("fields")
+                        ?.optJSONObject("uiPositions")
+                        ?.optString("stringValue", "{}") ?: "{}"
+                    return@withContext JSONObject(raw)
+                } catch (_: Throwable) {
+                    return@withContext JSONObject()
+                }
+            }
+            null -> JSONObject()
+        }
     }
 
     suspend fun saveSettings(uiPositions: JSONObject) = withContext(Dispatchers.IO) {
-        val url = URL(docUrl("settings/user"))
-        val conn = url.openConnection() as HttpURLConnection
-        conn.requestMethod = "PATCH"
-        conn.setRequestProperty("Content-Type", "application/json")
-        conn.doOutput = true
-        conn.connectTimeout = 8000
-        conn.readTimeout = 8000
+        when (val cfg = readConfig()) {
+            is StorageConfig.Neon -> {
+                val conn = openNeonConnection(cfg, "/api/settings", "PUT")
+                conn.doOutput = true
+                val body = JSONObject().apply {
+                    put("uiPositions", uiPositions)
+                }
+                OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+                conn.responseCode
+            }
+            is StorageConfig.Firebase -> {
+                val url = URL(docUrl(cfg, "settings/user"))
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "PATCH"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
 
-        val body = JSONObject().apply {
-            put("fields", JSONObject().apply {
-                put("uiPositions", JSONObject().put("stringValue", uiPositions.toString()))
-            })
+                val body = JSONObject().apply {
+                    put("fields", JSONObject().apply {
+                        put("uiPositions", JSONObject().put("stringValue", uiPositions.toString()))
+                    })
+                }
+                OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+                conn.responseCode
+            }
+            null -> Unit
         }
-        OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
-        conn.responseCode
     }
 }

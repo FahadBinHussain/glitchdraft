@@ -31,11 +31,15 @@ class ConfigProvider : ContentProvider() {
         val CONTENT_URI: Uri = Uri.parse("content://$AUTHORITY/$PATH_FIREBASE")
 
         const val COL_PROJECT_ID = "project_id"
-        const val COL_API_KEY    = "api_key"
+        const val COL_API_KEY = "api_key"
+        const val COL_NEON_API_BASE_URL = "neon_api_base_url"
+        const val COL_NEON_API_KEY = "neon_api_key"
 
-        private const val PREFS_NAME     = "glitchdraft_module_prefs"
+        private const val PREFS_NAME = "glitchdraft_module_prefs"
         private const val KEY_PROJECT_ID = "firebase_project_id"
-        private const val KEY_API_KEY    = "firebase_api_key"
+        private const val KEY_API_KEY = "firebase_api_key"
+        private const val KEY_NEON_API_BASE_URL = "neon_api_base_url"
+        private const val KEY_NEON_API_KEY = "neon_api_key"
 
         private val URI_MATCHER = UriMatcher(UriMatcher.NO_MATCH).also {
             it.addURI(AUTHORITY, PATH_FIREBASE, 1)
@@ -56,10 +60,19 @@ class ConfigProvider : ContentProvider() {
         val ctx = context ?: return null
         val prefs = ctx.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
         val projectId = prefs.getString(KEY_PROJECT_ID, null) ?: ""
-        val apiKey    = prefs.getString(KEY_API_KEY, null)    ?: ""
+        val apiKey = prefs.getString(KEY_API_KEY, null) ?: ""
+        val neonApiBaseUrl = prefs.getString(KEY_NEON_API_BASE_URL, null) ?: ""
+        val neonApiKey = prefs.getString(KEY_NEON_API_KEY, null) ?: ""
 
-        val cursor = MatrixCursor(arrayOf(COL_PROJECT_ID, COL_API_KEY))
-        cursor.addRow(arrayOf(projectId, apiKey))
+        val cursor = MatrixCursor(
+            arrayOf(
+                COL_PROJECT_ID,
+                COL_API_KEY,
+                COL_NEON_API_BASE_URL,
+                COL_NEON_API_KEY
+            )
+        )
+        cursor.addRow(arrayOf(projectId, apiKey, neonApiBaseUrl, neonApiKey))
         return cursor
     }
 
