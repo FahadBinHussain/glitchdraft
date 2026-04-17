@@ -1,4 +1,4 @@
-extension/key.pem
+*.pem
 
 # Extension - Node tooling
 extension/node_modules/
@@ -6,29 +6,29 @@ extension/pnpm-lock.yaml
 extension-build.zip
 
 # LSPosed module - Android / Gradle build artifacts
-lsposed-module/.gradle/
-lsposed-module/build/
-lsposed-module/app/build/
-lsposed-module/local.properties
-lsposed-module/.idea/
-lsposed-module/*.iml
-lsposed-module/**/*.iml
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/**/*.iml
 
 # Generated APKs / AABs
-lsposed-module/**/*.apk
-lsposed-module/**/*.aab
+android/**/*.apk
+android/**/*.aab
 
 # Keystore files (never commit signing keys)
-lsposed-module/**/*.jks
-lsposed-module/**/*.keystore
+android/**/*.jks
+android/**/*.keystore
 
 # Gradle wrapper JARs (download on demand)
-lsposed-module/gradle/wrapper/gradle-wrapper.jar
+android/gradle/wrapper/gradle-wrapper.jar
 
 # Android Studio misc
-lsposed-module/.DS_Store
-lsposed-module/captures/
-lsposed-module/lint-results*
+android/.DS_Store
+android/captures/
+android/lint-results*
 
 # Secrets / environment files - never commit credentials
 .env
