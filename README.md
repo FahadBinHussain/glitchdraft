@@ -37,3 +37,9 @@ service cloud.firestore {
 ```
 
 **Important**: These rules allow anyone to read/write your data. For production, add proper authentication.
+
+## Contributors
+
+<a href="https://github.com/FahadBinHussain/glitchdraft/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=FahadBinHussain/glitchdraft" alt="Contributors" />
+</a>
