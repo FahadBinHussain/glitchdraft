@@ -57,6 +57,21 @@ class NeonService {
 
     async getDraft(threadId) {
         const data = await this.request(`/api/drafts/${encodeURIComponent(threadId)}`, { method: "GET" });
+        if (!data.exists && this.isMessengerThreadId(threadId)) {
+            const existingId = await this.findDocByMessengerNumericId(this.getMessengerNumericId(threadId), threadId);
+            if (existingId && existingId !== threadId) {
+                const found = await this.request(`/api/drafts/${encodeURIComponent(existingId)}`, { method: "GET" });
+                return {
+                    messages: found.messages || [],
+                    contactName: found.contactName || null,
+                    exists: !!found.exists,
+                    foundDocId: existingId,
+                    needsRename: !!found.exists,
+                    renameFrom: existingId,
+                    renameTo: threadId
+                };
+            }
+        }
         return {
             messages: data.messages || [],
             contactName: data.contactName || null,
@@ -101,16 +116,39 @@ class NeonService {
 
     async findDocByNumericId(numericId) {
         try {
-            const allDrafts = await this.getAllDrafts();
-            const prefix = "messenger_web_" + numericId;
-            const prefixAndroid = "messenger_android_" + numericId;
-            const match = Object.keys(allDrafts).find((id) =>
-                id.startsWith(prefix + "_") || id === prefix ||
-                id.startsWith(prefixAndroid + "_") || id === prefixAndroid
-            );
-            return match || null;
+            return await this.findDocByMessengerNumericId(numericId);
         } catch (_) {
             return null;
         }
+    }
+
+    isMessengerThreadId(threadId) {
+        return /^messenger_(?:web|android)_\d+(?:_.+)?$/.test(threadId || "");
+    }
+
+    getMessengerNumericId(threadId) {
+        const match = String(threadId || "").match(/^messenger_(?:web|android)_(\d+)/);
+        return match ? match[1] : null;
+    }
+
+    async findDocByMessengerNumericId(numericId, excludeId = null) {
+        if (!numericId) return null;
+        const allDrafts = await this.getAllDrafts();
+        const prefix = "messenger_web_" + numericId;
+        const prefixAndroid = "messenger_android_" + numericId;
+        const ids = Object.keys(allDrafts).filter((id) =>
+            id !== excludeId &&
+            (id.startsWith(prefix + "_") || id === prefix ||
+             id.startsWith(prefixAndroid + "_") || id === prefixAndroid)
+        );
+
+        if (ids.length === 0) return null;
+        ids.sort((a, b) => {
+            const aMessages = allDrafts[a]?.messages?.length || 0;
+            const bMessages = allDrafts[b]?.messages?.length || 0;
+            if (bMessages !== aMessages) return bMessages - aMessages;
+            return (allDrafts[b]?.lastModified || 0) - (allDrafts[a]?.lastModified || 0);
+        });
+        return ids[0];
     }
 }

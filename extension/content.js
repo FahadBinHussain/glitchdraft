@@ -649,39 +649,75 @@
             .substring(0, 50);                 // max 50 chars
     }
 
+    function cleanDisplayName(name) {
+        if (!name) return null;
+        const cleaned = String(name)
+            .replace(/\s+/g, ' ')
+            .trim();
+        return cleaned && cleaned.length < 200 ? cleaned : null;
+    }
+
+    function cleanMessengerDisplayName(name) {
+        let cleaned = cleanDisplayName(name);
+        if (!cleaned) return null;
+
+        cleaned = cleaned
+            .replace(/^conversation\s+with\s+/i, '')
+            .replace(/\s*\(\s*messenger_(?:web|android)_\d+(?:_[^)]+)?\s*\)\s*$/i, '')
+            .replace(/\s*[-–|]\s*(?:Messenger|Facebook)\s*$/i, '')
+            .trim();
+
+        const isNoiseLabel = /^(?:chats(?:\s*[·•-]\s*\d+\s+unread)?|chat details|search messenger|new message|active now|messenger|facebook)$/i.test(cleaned);
+        if (isNoiseLabel) return null;
+        if (!cleaned || /^(?:Messenger|Facebook)$/i.test(cleaned)) return null;
+        return cleaned;
+    }
+
+    function getDisplayNameFromChatId(chatId) {
+        const messengerMatch = chatId?.match(/^messenger_(?:web|android)_\d+_(.+)$/);
+        if (messengerMatch) {
+            return messengerMatch[1]
+                .replace(/_/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim() || null;
+        }
+        return null;
+    }
+
     // Function to get the display name of the current conversation partner / group
     function getCurrentChatName() {
         const url = window.location.href;
 
         // ── Messenger (messenger.com / facebook.com) ──
         if (url.includes('messenger.com') || url.match(/facebook\.com.*\/t\//)) {
-            // Messenger uses obfuscated CSS class names, so we target by structure/role.
-            // Strategy 1: find the span with the contact name class observed in DevTools.
-            //   The span has class "x1c1uobl" among others (Messenger-specific heading span).
-            const candidateByClass = document.querySelector('span.x1c1uobl');
-            if (candidateByClass) {
-                const name = candidateByClass.textContent?.trim();
-                if (name && name.length > 0 && name.length < 200) return name;
-            }
-
-            // Strategy 2: look for a heading inside the thread/conversation header area
+            // Messenger uses obfuscated CSS class names, so prefer scoped header/role selectors.
             const headerSelectors = [
+                'div[role="main"] [aria-label^="Conversation with "]',
+                'div[role="main"] [aria-label*="Conversation with "]',
                 'div[role="main"] h1',
                 'div[role="main"] h2',
+                'div[role="main"] [role="heading"]',
                 'div[data-testid="conversation-title"] span',
                 'header h1',
                 'header h2',
             ];
             for (const sel of headerSelectors) {
                 const el = document.querySelector(sel);
-                const name = el?.textContent?.trim();
-                if (name && name.length > 0 && name.length < 200) return name;
+                const name = cleanMessengerDisplayName(el?.getAttribute('aria-label') || el?.textContent);
+                if (name) return name;
+            }
+
+            // Last DOM fallback: old observed Messenger heading class, but scoped to the main chat only.
+            const candidateByClass = document.querySelector('div[role="main"] span.x1c1uobl');
+            if (candidateByClass) {
+                const name = cleanMessengerDisplayName(candidateByClass.textContent);
+                if (name) return name;
             }
 
             // Strategy 3: document title (Messenger sets title to the contact name)
             const titleMatch = document.title.match(/^(.+?)(?:\s*[\|\-–].*)?$/);
             if (titleMatch && titleMatch[1] && titleMatch[1] !== 'Messenger' && titleMatch[1] !== 'Facebook') {
-                return titleMatch[1].trim();
+                return cleanMessengerDisplayName(titleMatch[1]);
             }
             return null;
         }
@@ -897,9 +933,9 @@
         const chatIdDisplay = document.getElementById('chatIdDisplay');
         if (chatIdDisplay) {
             const chatId = getCurrentChatId();
-            const chatName = getCurrentChatName();
+            const chatName = getCurrentChatName() || getDisplayNameFromChatId(chatId);
             if (chatName) {
-                chatIdDisplay.textContent = `${chatName} (${chatId || 'Unknown'})`;
+                chatIdDisplay.textContent = chatName;
                 chatIdDisplay.title = `ID: ${chatId || 'Unknown'}`;
             } else {
                 chatIdDisplay.textContent = `Chat ID: ${chatId || 'Unknown'}`;
@@ -2166,10 +2202,13 @@
             // Lazy rename: if the doc was found under a legacy/no-slug ID, rename it to the correct chatId
             lazyRenameIfNeeded(response, chatId);
 
-            // Lazy back-fill: if the stored doc has no contactName but we can detect one now, patch it silently
-            if (!response.contactName && response.exists && !response.needsRename) {
+            // Lazy back-fill: patch missing or noisy contactName values with the current clean display name.
+            if (response.exists && !response.needsRename) {
                 const detectedName = getCurrentChatName();
-                if (detectedName) {
+                const storedName = chatId.startsWith('messenger_')
+                    ? cleanMessengerDisplayName(response.contactName)
+                    : cleanDisplayName(response.contactName);
+                if (detectedName && storedName !== detectedName) {
                     chrome.runtime.sendMessage({
                         action: 'saveDraft',
                         chatId: chatId,
