@@ -1216,10 +1216,30 @@
                 resizeTimeout = setTimeout(() => {
                     const currentSite = window.location.hostname;
                     const positionKey = `uiPositions_${currentSite}`;
+                    const localCacheKey = `glitchdraft_pos_${currentSite}`;
                     
                     // Block remote sync from overwriting while we save
                     localPositionDirty = true;
                     clearTimeout(localPositionDirtyTimeout);
+                    
+                    // Snapshot position NOW (before any async)
+                    const containerRect = ui.container.getBoundingClientRect();
+                    const newContainerPos = positionToEdgeAnchored(
+                        containerRect.left,
+                        containerRect.top,
+                        currentWidth,
+                        currentHeight
+                    );
+
+                    // Write to local cache IMMEDIATELY so a refresh always has the latest size/position
+                    lastSavedWidth = currentWidth;
+                    lastSavedHeight = currentHeight;
+                    chrome.storage.local.get(localCacheKey, (cached) => {
+                        const existing = cached[localCacheKey] || {};
+                        existing.container = newContainerPos;
+                        chrome.storage.local.set({ [localCacheKey]: existing });
+                        lastKnownPositionsHash = JSON.stringify(existing);
+                    });
                     
                     // Get current settings from Firestore
                     chrome.runtime.sendMessage({ action: 'getSettings' }, (settingsResponse) => {
@@ -1235,22 +1255,9 @@
                         
                         const uiPositions = settingsResponse.settings.uiPositions || {};
                         uiPositions[positionKey] = uiPositions[positionKey] || {};
-                        
-                        // Update size while preserving edge-anchored position
-                        const containerRect = ui.container.getBoundingClientRect();
-                        uiPositions[positionKey].container = positionToEdgeAnchored(
-                            containerRect.left,
-                            containerRect.top,
-                            currentWidth,
-                            currentHeight
-                        );
-                        
-                        // Update last saved size
-                        lastSavedWidth = currentWidth;
-                        lastSavedHeight = currentHeight;
+                        uiPositions[positionKey].container = newContainerPos;
 
-                        // Write to local cache immediately so refresh restores correct size
-                        const localCacheKey = `glitchdraft_pos_${currentSite}`;
+                        // Update local cache (may already be up to date from the immediate write above)
                         chrome.storage.local.set({ [localCacheKey]: uiPositions[positionKey] });
                         lastKnownPositionsHash = JSON.stringify(uiPositions[positionKey]);
                         
@@ -1723,6 +1730,7 @@
             if (hasMoved) {
                 const currentSite = window.location.hostname;
                 const positionKey = `uiPositions_${currentSite}`;
+                const localCacheKey = `glitchdraft_pos_${currentSite}`;
                 
                 // Block remote sync from overwriting while we save
                 localPositionDirty = true;
@@ -1738,6 +1746,14 @@
                     ui.container.offsetWidth,
                     ui.container.offsetHeight
                 );
+
+                // Write to local cache IMMEDIATELY so a refresh always has the latest position
+                chrome.storage.local.get(localCacheKey, (cached) => {
+                    const existing = cached[localCacheKey] || {};
+                    existing.container = newContainerPos;
+                    chrome.storage.local.set({ [localCacheKey]: existing });
+                    lastKnownPositionsHash = JSON.stringify(existing);
+                });
 
                 // Debounce: wait 300ms so rapid drags only fire one save
                 dragSaveTimeout = setTimeout(() => {
@@ -1757,8 +1773,7 @@
                         uiPositions[positionKey] = uiPositions[positionKey] || {};
                         uiPositions[positionKey].container = newContainerPos;
 
-                        // Write to local cache immediately so refresh restores correct position
-                        const localCacheKey = `glitchdraft_pos_${currentSite}`;
+                        // Update local cache (may already be up to date from the immediate write above)
                         chrome.storage.local.set({ [localCacheKey]: uiPositions[positionKey] });
                         lastKnownPositionsHash = JSON.stringify(uiPositions[positionKey]);
                         
@@ -1836,6 +1851,7 @@
                 const toggleRect = ui.toggleButton.getBoundingClientRect();
                 const currentSite = window.location.hostname;
                 const positionKey = `uiPositions_${currentSite}`;
+                const localCacheKey = `glitchdraft_pos_${currentSite}`;
                 const newTogglePos = positionToEdgeAnchored(
                     toggleRect.left,
                     toggleRect.top,
@@ -1847,6 +1863,14 @@
                 localPositionDirty = true;
                 clearTimeout(localPositionDirtyTimeout);
                 clearTimeout(dragSaveTimeout);
+
+                // Write to local cache IMMEDIATELY so a refresh always has the latest position
+                chrome.storage.local.get(localCacheKey, (cached) => {
+                    const existing = cached[localCacheKey] || {};
+                    existing.toggle = newTogglePos;
+                    chrome.storage.local.set({ [localCacheKey]: existing });
+                    lastKnownPositionsHash = JSON.stringify(existing);
+                });
 
                 // Debounce: wait 300ms so rapid drags only fire one save
                 dragSaveTimeout = setTimeout(() => {
@@ -1866,8 +1890,7 @@
                         uiPositions[positionKey] = uiPositions[positionKey] || {};
                         uiPositions[positionKey].toggle = newTogglePos;
 
-                        // Write to local cache immediately so refresh restores correct position
-                        const localCacheKey = `glitchdraft_pos_${currentSite}`;
+                        // Update local cache (may already be up to date from the immediate write above)
                         chrome.storage.local.set({ [localCacheKey]: uiPositions[positionKey] });
                         lastKnownPositionsHash = JSON.stringify(uiPositions[positionKey]);
                         
