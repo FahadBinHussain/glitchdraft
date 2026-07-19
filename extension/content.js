@@ -1182,101 +1182,34 @@
     // Create UI elements
     const ui = createUI();
 
-    // Add ResizeObserver to track container size changes
+    // Position-save state
     let resizeTimeout;
-    let dragSaveTimeout; // Debounce position saves to avoid race conditions
-    let isApplyingRemoteResize = false; // Prevent sync loop
-    let localPositionDirty = false;    // Suppress remote position sync after local drag/resize
-    let localPositionDirtyTimeout = null;
-    // Shared hash for local position-change detection in this content script.
-    let lastKnownPositionsHash = '';
+    let dragSaveTimeout;
+    let isApplyingRemoteResize = false; // Prevent ResizeObserver feedback loop while applying remote
     let lastSavedWidth = 0;
     let lastSavedHeight = 0;
     
     const resizeObserver = new ResizeObserver(entries => {
         for (let entry of entries) {
             if (entry.target === ui.container && !isApplyingRemoteResize) {
-                // Only save if container is visible and size actually changed significantly
-                const isVisible = !ui.container.classList.contains('hidden') && 
+                const isVisible = !ui.container.classList.contains('hidden') &&
                                   getComputedStyle(ui.container).display !== 'none';
                 const rect = ui.container.getBoundingClientRect();
                 const currentWidth = Math.round(rect.width);
                 const currentHeight = Math.round(rect.height);
-                
-                // Add threshold: only save if changed by at least 10px
+
+                // Skip if hidden or change is too small to matter
                 const widthDiff = Math.abs(currentWidth - lastSavedWidth);
                 const heightDiff = Math.abs(currentHeight - lastSavedHeight);
-                
-                if (!isVisible || (widthDiff < 10 && heightDiff < 10)) {
-                    return;
-                }
-                
-                // Debounce resize events to avoid too many saves
+                if (!isVisible || (widthDiff < 10 && heightDiff < 10)) return;
+
                 clearTimeout(resizeTimeout);
                 resizeTimeout = setTimeout(() => {
-                    const currentSite = window.location.hostname;
-                    const positionKey = `uiPositions_${currentSite}`;
-                    const localCacheKey = `glitchdraft_pos_${currentSite}`;
-                    
-                    // Block remote sync from overwriting while we save
-                    localPositionDirty = true;
-                    clearTimeout(localPositionDirtyTimeout);
-                    
-                    // Snapshot position NOW (before any async)
-                    const containerRect = ui.container.getBoundingClientRect();
-                    const newContainerPos = positionToEdgeAnchored(
-                        containerRect.left,
-                        containerRect.top,
-                        currentWidth,
-                        currentHeight
-                    );
-
-                    // Write to local cache IMMEDIATELY so a refresh always has the latest size/position
                     lastSavedWidth = currentWidth;
                     lastSavedHeight = currentHeight;
-                    chrome.storage.local.get(localCacheKey, (cached) => {
-                        const existing = cached[localCacheKey] || {};
-                        existing.container = newContainerPos;
-                        chrome.storage.local.set({ [localCacheKey]: existing });
-                        lastKnownPositionsHash = JSON.stringify(existing);
-                    });
-                    
-                    // Get current settings from Firestore
-                    chrome.runtime.sendMessage({ action: 'getSettings' }, (settingsResponse) => {
-                        if (!settingsResponse || !settingsResponse.success) {
-                            showNotification(
-                                'Position load failed',
-                                settingsResponse?.message || 'getSettings failed',
-                                'error'
-                            );
-                            localPositionDirty = false;
-                            return;
-                        }
-                        
-                        const uiPositions = settingsResponse.settings.uiPositions || {};
-                        uiPositions[positionKey] = uiPositions[positionKey] || {};
-                        uiPositions[positionKey].container = newContainerPos;
-
-                        // Update local cache (may already be up to date from the immediate write above)
-                        chrome.storage.local.set({ [localCacheKey]: uiPositions[positionKey] });
-                        lastKnownPositionsHash = JSON.stringify(uiPositions[positionKey]);
-                        
-                        // Save to Firestore
-                        chrome.runtime.sendMessage({ action: 'saveSettings', settings: { uiPositions } }, (response) => {
-                            if (response && response.success) {
-                                showNotification('Window size saved!', '', 'success');
-                            } else {
-                                showNotification(
-                                    'Window size save failed',
-                                    response?.message || 'saveSettings failed',
-                                    'error'
-                                );
-                            }
-                            // Allow remote sync again after 3s grace period
-                            localPositionDirtyTimeout = setTimeout(() => { localPositionDirty = false; }, 3000);
-                        });
-                    });
-                }, 500); // Wait 500ms after resize stops
+                    const pos = positionToEdgeAnchored(rect.left, rect.top, currentWidth, currentHeight);
+                    saveUiPosition('container', pos);
+                }, 500);
             }
         }
     });
@@ -1725,74 +1658,13 @@
         if (isDragging) {
             isDragging = false;
             ui.container.style.cursor = 'default';
-            
-            // Only save position if actually moved
+
             if (hasMoved) {
-                const currentSite = window.location.hostname;
-                const positionKey = `uiPositions_${currentSite}`;
-                const localCacheKey = `glitchdraft_pos_${currentSite}`;
-                
-                // Block remote sync from overwriting while we save
-                localPositionDirty = true;
-                clearTimeout(localPositionDirtyTimeout);
+                const rect = ui.container.getBoundingClientRect();
+                const pos = positionToEdgeAnchored(rect.left, rect.top, ui.container.offsetWidth, ui.container.offsetHeight);
+
                 clearTimeout(dragSaveTimeout);
-
-                // Snapshot position NOW (before any async)
-                // Store edge-anchored distances so position is reproduced accurately on any screen size
-                const containerRect = ui.container.getBoundingClientRect();
-                const newContainerPos = positionToEdgeAnchored(
-                    containerRect.left,
-                    containerRect.top,
-                    ui.container.offsetWidth,
-                    ui.container.offsetHeight
-                );
-
-                // Write to local cache IMMEDIATELY so a refresh always has the latest position
-                chrome.storage.local.get(localCacheKey, (cached) => {
-                    const existing = cached[localCacheKey] || {};
-                    existing.container = newContainerPos;
-                    chrome.storage.local.set({ [localCacheKey]: existing });
-                    lastKnownPositionsHash = JSON.stringify(existing);
-                });
-
-                // Debounce: wait 300ms so rapid drags only fire one save
-                dragSaveTimeout = setTimeout(() => {
-                    // Get current settings from Firestore
-                    chrome.runtime.sendMessage({ action: 'getSettings' }, (settingsResponse) => {
-                        if (!settingsResponse || !settingsResponse.success) {
-                            showNotification(
-                                'Position load failed',
-                                settingsResponse?.message || 'getSettings failed',
-                                'error'
-                            );
-                            localPositionDirty = false;
-                            return;
-                        }
-                        
-                        const uiPositions = settingsResponse.settings.uiPositions || {};
-                        uiPositions[positionKey] = uiPositions[positionKey] || {};
-                        uiPositions[positionKey].container = newContainerPos;
-
-                        // Update local cache (may already be up to date from the immediate write above)
-                        chrome.storage.local.set({ [localCacheKey]: uiPositions[positionKey] });
-                        lastKnownPositionsHash = JSON.stringify(uiPositions[positionKey]);
-                        
-                        // Save to Firestore
-                        chrome.runtime.sendMessage({ action: 'saveSettings', settings: { uiPositions } }, (response) => {
-                            if (response && response.success) {
-                                showNotification('Position & size saved!', '', 'success');
-                            } else {
-                                showNotification(
-                                    'Position save failed',
-                                    response?.message || 'saveSettings failed',
-                                    'error'
-                                );
-                            }
-                            // Allow remote sync again after 3s grace period
-                            localPositionDirtyTimeout = setTimeout(() => { localPositionDirty = false; }, 3000);
-                        });
-                    });
-                }, 300);
+                dragSaveTimeout = setTimeout(() => saveUiPosition('container', pos), 300);
             }
             hasMoved = false;
         }
@@ -1843,76 +1715,56 @@
         if (isDraggingToggle) {
             isDraggingToggle = false;
             ui.toggleButton.style.cursor = 'pointer';
-            
-            // Only save position if actually moved
+
             if (toggleHasMoved) {
-                // Snapshot position NOW (before async)
-                // Store edge-anchored distances so position is reproduced accurately on any screen size
-                const toggleRect = ui.toggleButton.getBoundingClientRect();
-                const currentSite = window.location.hostname;
-                const positionKey = `uiPositions_${currentSite}`;
-                const localCacheKey = `glitchdraft_pos_${currentSite}`;
-                const newTogglePos = positionToEdgeAnchored(
-                    toggleRect.left,
-                    toggleRect.top,
-                    ui.toggleButton.offsetWidth  || 38,
+                const rect = ui.toggleButton.getBoundingClientRect();
+                const pos = positionToEdgeAnchored(
+                    rect.left,
+                    rect.top,
+                    ui.toggleButton.offsetWidth || 38,
                     ui.toggleButton.offsetHeight || 38
                 );
-                
-                // Block remote sync from overwriting while we save
-                localPositionDirty = true;
-                clearTimeout(localPositionDirtyTimeout);
+
                 clearTimeout(dragSaveTimeout);
-
-                // Write to local cache IMMEDIATELY so a refresh always has the latest position
-                chrome.storage.local.get(localCacheKey, (cached) => {
-                    const existing = cached[localCacheKey] || {};
-                    existing.toggle = newTogglePos;
-                    chrome.storage.local.set({ [localCacheKey]: existing });
-                    lastKnownPositionsHash = JSON.stringify(existing);
-                });
-
-                // Debounce: wait 300ms so rapid drags only fire one save
-                dragSaveTimeout = setTimeout(() => {
-                    // Get current settings
-                    chrome.runtime.sendMessage({ action: 'getSettings' }, (settingsResponse) => {
-                        if (!settingsResponse || !settingsResponse.success) {
-                            showNotification(
-                                'Position load failed',
-                                settingsResponse?.message || 'getSettings failed',
-                                'error'
-                            );
-                            localPositionDirty = false;
-                            return;
-                        }
-                        
-                        const uiPositions = settingsResponse.settings.uiPositions || {};
-                        uiPositions[positionKey] = uiPositions[positionKey] || {};
-                        uiPositions[positionKey].toggle = newTogglePos;
-
-                        // Update local cache (may already be up to date from the immediate write above)
-                        chrome.storage.local.set({ [localCacheKey]: uiPositions[positionKey] });
-                        lastKnownPositionsHash = JSON.stringify(uiPositions[positionKey]);
-                        
-                        // Save to Firestore
-                        chrome.runtime.sendMessage({ action: 'saveSettings', settings: { uiPositions } }, (response) => {
-                            if (response && response.success) {
-                                showNotification('Button position saved!', '', 'success');
-                            } else {
-                                showNotification(
-                                    'Button position save failed',
-                                    response?.message || 'saveSettings failed',
-                                    'error'
-                                );
-                            }
-                            // Allow remote sync again after 3s grace period
-                            localPositionDirtyTimeout = setTimeout(() => { localPositionDirty = false; }, 3000);
-                        });
-                    });
-                }, 300);
+                dragSaveTimeout = setTimeout(() => saveUiPosition('toggle', pos), 300);
             }
             toggleHasMoved = false;
         }
+    }
+
+    // Single, simple position-save path.
+    // Writes to local cache (instant next-load) and to the backend (Neon/Firestore).
+    // `elementKind` is 'container' or 'toggle'. `pos` is an edge-anchored position object.
+    function saveUiPosition(elementKind, pos) {
+        const currentSite = window.location.hostname;
+        const positionKey = `uiPositions_${currentSite}`;
+        const localCacheKey = `glitchdraft_pos_${currentSite}`;
+
+        // 1. Local cache (instant apply on next refresh, no flash)
+        chrome.storage.local.get(localCacheKey, (cached) => {
+            const existing = cached[localCacheKey] || {};
+            existing[elementKind] = pos;
+            chrome.storage.local.set({ [localCacheKey]: existing });
+        });
+
+        // 2. Backend — merge our site's key into the existing uiPositions map
+        chrome.runtime.sendMessage({ action: 'getSettings' }, (resp) => {
+            if (!resp || !resp.success) {
+                showNotification('Position save failed', resp?.message || 'getSettings failed', 'error');
+                return;
+            }
+            const uiPositions = resp.settings.uiPositions || {};
+            uiPositions[positionKey] = uiPositions[positionKey] || {};
+            uiPositions[positionKey][elementKind] = pos;
+
+            chrome.runtime.sendMessage({ action: 'saveSettings', settings: { uiPositions } }, (r) => {
+                if (r && r.success) {
+                    showNotification('Position saved', '', 'success');
+                } else {
+                    showNotification('Position save failed', r?.message || 'saveSettings failed', 'error');
+                }
+            });
+        });
     }
 
     // Convert a bounding rect position to an edge-anchored position object.
@@ -2015,29 +1867,18 @@
         const positionKey = `uiPositions_${currentSite}`;
         const localCacheKey = `glitchdraft_pos_${currentSite}`;
 
-        // 1. Apply cached positions instantly (no flash)
+        // 1. Apply cached positions instantly (no flash on reload)
         chrome.storage.local.get(localCacheKey, (cached) => {
             const cachedPositions = cached[localCacheKey];
-            if (cachedPositions) {
-                applyPositionsToUI(cachedPositions);
-                lastKnownPositionsHash = JSON.stringify(cachedPositions);
-            }
+            if (cachedPositions) applyPositionsToUI(cachedPositions);
 
-            // 2. Then fetch from Firestore and update if different
+            // 2. Then fetch from backend and apply if present (overrides stale cache)
             chrome.runtime.sendMessage({ action: 'getSettings' }, (response) => {
                 if (!response || !response.success) return;
                 const positions = response.settings.uiPositions?.[positionKey];
                 if (!positions) return;
-
-                // Update local cache
                 chrome.storage.local.set({ [localCacheKey]: positions });
-
-                // Only re-apply if different from what we already applied
-                const remoteHash = JSON.stringify(positions);
-                if (remoteHash !== lastKnownPositionsHash) {
-                    applyPositionsToUI(positions);
-                    lastKnownPositionsHash = remoteHash;
-                }
+                applyPositionsToUI(positions);
             });
         });
     }
@@ -3235,30 +3076,14 @@
         // Start observing the target node for configured mutations
         observer.observe(document.body, config);
         
-        // Start real-time sync polling
+        // Start real-time sync polling (messages only — positions load once on init)
         startRealtimeSync();
-        // Start real-time position listener (content-script based, no SW limit)
-        startPositionListener();
     }
-    
-    // Real-time sync / position polling — implementations live in draftSync.js
 
-    function startPositionListener() {
-        gdStartPositionListener(
-            applyPositionsToUI,
-            () => isDragging || isDraggingToggle,
-            () => localPositionDirty
-        );
-    }
+    // Real-time message sync — implementation lives in draftSync.js
 
     function startRealtimeSync() {
-        gdStartRealtimeSync(
-            getCurrentChatId,
-            loadSavedMessages,
-            showNotification,
-            applyPositionsToUI,
-            () => localPositionDirty
-        );
+        gdStartRealtimeSync(getCurrentChatId, loadSavedMessages, showNotification);
     }
 
     // Theme toggle function
