@@ -20,6 +20,21 @@ async function getService() {
 }
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    // dev self-reload (tools/reload-extension.ps1 -> extension/reload.html):
+    // Extensions Reloader never re-reads manifest.json, so manifest bumps go
+    // through chrome.runtime.reload() here - the real disk re-load. the
+    // sender tab is blanked first so no extension page survives the reload.
+    if (request && request.type === "selfReload") {
+        (async () => {
+            try {
+                if (sender && sender.tab && sender.tab.id !== undefined) {
+                    await chrome.tabs.update(sender.tab.id, { url: "about:blank" }).catch(() => {});
+                }
+            } catch {}
+            chrome.runtime.reload();
+        })();
+        return;
+    }
     if (request.action === "sync") {
         handleSync().then(sendResponse);
         return true;

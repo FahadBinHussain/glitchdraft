@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "GlitchDraft",
-    "version": "1.1",
+    "version": "1.1.1",
     "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA39me1KsI2J+CEW1+dHGlvir1uSVaSFlvC4XGAx1CWljmZQAZq5/DPhUiPEqyOVX5kXDHHtUl0gA1gr/L7gbYbrolW8jw0hBnfaDBcuQd7hEMJ/7aYIk3yEfWoSN+tOtJ3h0Ye5I47O33oowVRtH0EVz6cUGuKUoHBRdPPEipHT3TXtCivV96RdYK01phkSEYqSgQxlwocDh2W/BRgTkCU0cIkQRKnysOoO3V9xbf3R6F1a2mbY8QvBv/KN9PxtZmCnuGu3fjVdvg3EB2yTZAbtoYi0oske3H2ko3vviREF9CcQNApfPen8AgbGWsHxGXUwGnXBaQMrMp0qh297U+NQIDAQAB",
     "description": "Save draft messages, including text and images, for specific chat threads to send later. Supports multiple messaging platforms.",
     "permissions": [
