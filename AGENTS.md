@@ -10,6 +10,28 @@ bumps are picked up too. Extensions Reloader (`start msedge
 http://reload.extensions`) is JS-only and never re-reads the manifest; the manual
 button on `edge://extensions` is fallback.
 
+## android / lsposed module
+
+- build from repo root: `npm run android:run` (assembleDebug + install + launch
+  MainActivity), `android:build:release`, `android:release:apk`. all three go
+  through `tools/android.ps1`, which picks a JDK 21 (app/build.gradle pins
+  source/target/jvmTarget to 21) and prints which one it used.
+- the gradle wrapper (`android/gradlew`, `gradlew.bat`,
+  `android/gradle/wrapper/gradle-wrapper.jar`) is committed. an older .gitignore
+  rule kept the jar out under "download on demand" — gradlew cannot run without
+  it, so that rule was removed.
+- release is unsigned: app/build.gradle has no signingConfig, so
+  `android:release:apk` stops with an explicit error instead of copying an
+  unsigned apk to backend/public. sideload with `android:run` until a keystore
+  exists (keystores stay gitignored / in the vault).
+- gotcha: `android/app/src/main/res/mipmap-mdpi/ic_launcher.png` was committed as
+  a 0-byte blob, which only surfaced in `mergeReleaseResources`. re-exported at
+  48x48 from the hdpi source.
+- phone screenshots: `adb exec-out screencap -p > file` corrupts the png under
+  pwsh — use `adb shell screencap -p /sdcard/x.png` + `adb pull`. a black frame
+  means the screen is off: `adb shell svc power stayon true`,
+  `input keyevent KEYCODE_WAKEUP`, `wm dismiss-keyguard`, `cmd statusbar collapse`.
+
 ## deploy / quota locations
 
 - vercel prod project `glitchdraft` sits under the `bayazid10@gmail.com` profile and

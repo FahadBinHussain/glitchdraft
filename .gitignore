@@ -22,8 +22,8 @@ android/**/*.aab
 android/**/*.jks
 android/**/*.keystore
 
-# Gradle wrapper JARs (download on demand)
-android/gradle/wrapper/gradle-wrapper.jar
+# Gradle wrapper jar IS committed - gradlew cannot run without it, so
+# "download on demand" was never a thing. see AGENTS.md.
 
 # Android Studio misc
 android/.DS_Store
