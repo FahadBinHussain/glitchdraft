@@ -25,6 +25,9 @@ button on `edge://extensions` is fallback.
   the month (`quota_reset_at` from `projects-json`).
 - gotcha: `suspend_timeout_seconds: 0` = plan default (300s), `-1` = never suspend.
   scale-to-zero works fine here — operations log shows suspend/start ~every 3h.
-- CU burn source: `extension/draftSync.js` polls `getDraft` every 2s while a chat
-  tab is open, so backend → Neon stays warm; ~12 CU-h in 4 days ≈ the whole 100 CU-h
-  monthly quota in one cycle. raise that interval before touching db config.
+- CU burn source: `extension/draftSync.js` polled `getDraft` every 2s while a chat
+  tab was open, ~12 CU-h in 4 days ≈ the whole 100 CU-h monthly quota in one cycle.
+  Now 10s and fully paused on `document.hidden` — only a hidden tab lets the compute
+  reach scale-to-zero, a visible tab keeps it awake no matter the interval.
+  `extension/draftSync.js` and `android/app/src/main/assets/glitchdraft/draftSync.js`
+  are the same script: edit both.

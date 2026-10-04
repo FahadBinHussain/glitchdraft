@@ -32,33 +32,66 @@ function gdLazyRenameIfNeeded(response, currentChatId, getChatName) {
 }
 
 // ── Real-time message sync ───────────────────────────────────────────────────
+// Polling stops entirely while the tab is backgrounded. A request every few
+// seconds never lets the compute reach its scale-to-zero idle window, so an
+// unfocused-but-hidden tab is the only state where the CU clock actually stops.
+const GD_SYNC_POLL_MS = 10000;
 let _syncInterval = null;
 let _lastKnownMessagesHash = '';
+let _syncCbs = null;
+let _syncVisibilityHandler = null;
+
+function gdSyncTick() {
+    if (!_syncCbs || document.hidden) return;
+    const { getCurrentChatId, loadSavedMessages, showNotification } = _syncCbs;
+
+    const chatId = getCurrentChatId();
+    if (!chatId) return;
+
+    chrome.runtime.sendMessage({ action: 'getDraft', chatId }, (response) => {
+        if (!response || !response.success) return;
+        const messages = response.messages || [];
+        const messagesHash = JSON.stringify(messages.map(m => ({ t: m.timestamp, h: m.html })));
+        if (messagesHash !== _lastKnownMessagesHash) {
+            _lastKnownMessagesHash = messagesHash;
+            showNotification('Messages synced from another device', '', 'success');
+            loadSavedMessages();
+        }
+    });
+}
+
+function gdRestartSyncTimer() {
+    if (_syncInterval) {
+        clearInterval(_syncInterval);
+        _syncInterval = null;
+    }
+    if (document.hidden || !_syncCbs) return;
+    _syncInterval = setInterval(gdSyncTick, GD_SYNC_POLL_MS);
+}
+
+function gdBindSyncVisibility() {
+    if (_syncVisibilityHandler) document.removeEventListener('visibilitychange', _syncVisibilityHandler);
+    _syncVisibilityHandler = () => {
+        if (document.hidden) {
+            gdRestartSyncTimer();
+            return;
+        }
+        gdSyncTick(); // catch up immediately on return instead of waiting out the interval
+        gdRestartSyncTimer();
+    };
+    document.addEventListener('visibilitychange', _syncVisibilityHandler);
+}
 
 /**
- * Start a 2-second polling loop to reload messages when they change on another device.
- * Position UI is NOT synced here — it loads once on init and saves on user drag/resize.
+ * Start a 10-second polling loop that reloads messages when they change on
+ * another device. The loop is paused while the tab is hidden.
  *
  * @param {function} getCurrentChatId
  * @param {function} loadSavedMessages
  * @param {function} showNotification
  */
 function gdStartRealtimeSync(getCurrentChatId, loadSavedMessages, showNotification) {
-    if (_syncInterval) clearInterval(_syncInterval);
-
-    _syncInterval = setInterval(() => {
-        const chatId = getCurrentChatId();
-        if (!chatId) return;
-
-        chrome.runtime.sendMessage({ action: 'getDraft', chatId }, (response) => {
-            if (!response || !response.success) return;
-            const messages = response.messages || [];
-            const messagesHash = JSON.stringify(messages.map(m => ({ t: m.timestamp, h: m.html })));
-            if (messagesHash !== _lastKnownMessagesHash) {
-                _lastKnownMessagesHash = messagesHash;
-                showNotification('Messages synced from another device', '', 'success');
-                loadSavedMessages();
-            }
-        });
-    }, 2000);
+    _syncCbs = { getCurrentChatId, loadSavedMessages, showNotification };
+    gdBindSyncVisibility();
+    gdRestartSyncTimer();
 }
