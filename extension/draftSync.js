@@ -37,7 +37,8 @@ function gdLazyRenameIfNeeded(response, currentChatId, getChatName) {
 // unfocused-but-hidden tab is the only state where the CU clock actually stops.
 const GD_SYNC_POLL_MS = 10000;
 let _syncInterval = null;
-let _lastKnownMessagesHash = '';
+let _lastKnownMessagesHash = null;
+let _lastSyncChatId = null;
 let _syncCbs = null;
 let _syncVisibilityHandler = null;
 
@@ -47,16 +48,20 @@ function gdSyncTick() {
 
     const chatId = getCurrentChatId();
     if (!chatId) return;
+    const chatChanged = chatId !== _lastSyncChatId;
+    _lastSyncChatId = chatId;
 
     chrome.runtime.sendMessage({ action: 'getDraft', chatId }, (response) => {
         if (!response || !response.success) return;
         const messages = response.messages || [];
         const messagesHash = JSON.stringify(messages.map(m => ({ t: m.timestamp, h: m.html })));
-        if (messagesHash !== _lastKnownMessagesHash) {
-            _lastKnownMessagesHash = messagesHash;
-            showNotification('Messages synced from another device', '', 'success');
-            loadSavedMessages();
-        }
+        if (messagesHash === _lastKnownMessagesHash) return;
+
+        // first sight of a chat (startup or switch) is a baseline, not a remote edit
+        const isBaseline = chatChanged || _lastKnownMessagesHash === null;
+        _lastKnownMessagesHash = messagesHash;
+        if (!isBaseline) showNotification('Messages synced from another device', '', 'success');
+        loadSavedMessages();
     });
 }
 

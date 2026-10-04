@@ -31,3 +31,10 @@ button on `edge://extensions` is fallback.
   reach scale-to-zero, a visible tab keeps it awake no matter the interval.
   `extension/draftSync.js` and `android/app/src/main/assets/glitchdraft/draftSync.js`
   are the same script: edit both.
+
+## known issues
+
+- `loadDraftsFromCloud()` is called from `handleChatChange()` (`extension/content.js:928`,
+  `android/.../content.js:797`) but defined nowhere in the repo — every chat switch
+  throws a ReferenceError. The chat switch currently still renders only because the
+  sync tick's `loadSavedMessages()` covers it up.

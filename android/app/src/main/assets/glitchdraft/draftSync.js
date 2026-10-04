@@ -132,7 +132,8 @@ function gdPollPositions(applyPositionsToUI, isDraggingFn, localDirtyFn) {
 
 // ── Real-time message sync ───────────────────────────────────────────────────
 let _syncInterval = null;
-let _lastKnownMessagesHash = '';
+let _lastKnownMessagesHash = null;
+let _lastSyncChatId = null;
 let _isFirstPositionLoad = true;
 
 function gdSyncTick() {
@@ -141,17 +142,21 @@ function gdSyncTick() {
 
     const chatId = getCurrentChatId();
     if (!chatId) return;
+    const chatChanged = chatId !== _lastSyncChatId;
+    _lastSyncChatId = chatId;
 
     // Check for message changes
     chrome.runtime.sendMessage({ action: 'getDraft', chatId }, (response) => {
         if (!response || !response.success) return;
         const messages = response.messages || [];
         const messagesHash = JSON.stringify(messages.map(m => ({ t: m.timestamp, h: m.html })));
-        if (messagesHash !== _lastKnownMessagesHash) {
-            _lastKnownMessagesHash = messagesHash;
-            showNotification('Messages synced from another device', '', 'success');
-            loadSavedMessages();
-        }
+        if (messagesHash === _lastKnownMessagesHash) return;
+
+        // first sight of a chat (startup or switch) is a baseline, not a remote edit
+        const isBaseline = chatChanged || _lastKnownMessagesHash === null;
+        _lastKnownMessagesHash = messagesHash;
+        if (!isBaseline) showNotification('Messages synced from another device', '', 'success');
+        loadSavedMessages();
     });
 
     // Check for position changes
