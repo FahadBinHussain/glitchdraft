@@ -1265,14 +1265,6 @@
         return true;
     });
 
-    // Register in Tampermonkey menu
-    // GM_registerMenuCommand("Toggle Saved Messages", toggleContainer); // TODO: Replace with chrome.storage
-    // GM_registerMenuCommand("Export All Saved Messages", exportSavedMessages); // TODO: Replace with chrome.storage
-    // GM_registerMenuCommand("Toggle Debug Mode", toggleDebugMode); // TODO: Replace with chrome.storage
-    if (config.debugMode) {
-        // GM_registerMenuCommand("Debug Input Fields", debugInputFields); // TODO: Replace with chrome.storage
-    }
-
     // Check sync status when UI is opened
     function checkSyncStatus() {
         try {
