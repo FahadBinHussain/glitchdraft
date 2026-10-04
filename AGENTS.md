@@ -34,7 +34,8 @@ button on `edge://extensions` is fallback.
 
 ## known issues
 
-- `loadDraftsFromCloud()` is called from `handleChatChange()` (`extension/content.js:928`,
-  `android/.../content.js:797`) but defined nowhere in the repo — every chat switch
-  throws a ReferenceError. The chat switch currently still renders only because the
-  sync tick's `loadSavedMessages()` covers it up.
+- fixed: `handleChatChange()` called `loadDraftsFromCloud()`, which existed nowhere —
+  every chat switch threw a ReferenceError (`extension/content.js`,
+  `android/.../content.js`) and only rendered because the sync tick's
+  `loadSavedMessages()` covered for it. It now calls `loadSavedMessages()` directly,
+  which is the real fetch-and-render path. don't reintroduce a second loader.

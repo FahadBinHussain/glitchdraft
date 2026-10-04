@@ -794,7 +794,7 @@
     // Update chat ID display
     updateChatIdDisplay();
     // Reload drafts for the new chat
-    loadDraftsFromCloud();
+    loadSavedMessages();
   }
 
   // Update the chat ID display in the UI
