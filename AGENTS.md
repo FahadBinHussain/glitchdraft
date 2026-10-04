@@ -44,6 +44,34 @@ button on `edge://extensions` is fallback.
   means the screen is off: `adb shell svc power stayon true`,
   `input keyevent KEYCODE_WAKEUP`, `wm dismiss-keyguard`, `cmd statusbar collapse`.
 
+## phone / xposed framework (device 21091116UI)
+
+- the framework on this phone is **Vector** (`zygisk_vector`), not stock LSPosed:
+  `zygisk_lsposed` also sits in /data/adb/modules but carries a `disable` marker,
+  and no Xposed manager app is installed at all (org.lsposed.manager absent).
+  manage it with the CLI that ships inside the module:
+  `adb shell su -c '/data/adb/modules/zygisk_vector/cli status'` →
+  subcommands `modules ls|enable|disable`, `scope ls|add|set|rm`
+  (`scope set MODULE_PKG <app/0> ...` — MODULE_PKG is required, omitting it NPEs).
+  config db: `/data/adb/lspd/config/modules_config.db` (Vector still uses the
+  lspd paths), logs: `/data/adb/lspd/log/*.log`.
+- uninstalling/reinstalling the module app **resets it to enabled=0 and wipes its
+  scope** — this happened when the debug build was swapped for the signed release
+  apk. restore with `modules enable com.fahad.glitchdraft.lsposed` +
+  `scope set com.fahad.glitchdraft.lsposed com.facebook.orca/0 com.facebook.katana/0
+  com.discord/0 com.whatsapp/0` (the 4 installed packages from `TARGET_PACKAGES`
+  in `hook/GlitchDraftHook.kt`). no reboot needed — verify it stuck with
+  `su -c 'grep -a -h glitchdraft /data/adb/lspd/log/*.log | tail'`: a
+  `Loading legacy module ... /data/app/~~<path>/base.apk` line must appear with
+  the current path after `am force-stop com.facebook.orca` + relaunch.
+- gotchas: MIUI pops a transient "Can't open this app / contact your IT admin"
+  dialog on first launch of a fresh install — the process is already running and
+  it clears itself, don't chase it. `adb shell input text` sometimes appends a
+  stray character (check field length before saving), and the IME opening
+  reflows the layout, so re-read button bounds from `uiautomator dump` right
+  before tapping instead of reusing earlier coordinates. `uiautomator dump`
+  prints a MIUI theme_config stack trace but still writes the xml.
+
 ## deploy / quota locations
 
 - vercel prod project `glitchdraft` sits under the `bayazid10@gmail.com` profile and
