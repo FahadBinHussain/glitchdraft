@@ -71,6 +71,24 @@ button on `edge://extensions` is fallback.
   reflows the layout, so re-read button bounds from `uiautomator dump` right
   before tapping instead of reusing earlier coordinates. `uiautomator dump`
   prints a MIUI theme_config stack trace but still writes the xml.
+- overlay tap testing: `dumpsys window windows` mAttrs coords sit ~one status bar
+  (~81px) above real screen pixels — `input tap` needs SCREEN coords, so measure
+  the icon's blue bbox programmatically in a screencap png (`System.Drawing`,
+  full 1080x2400) instead of trusting mAttrs or eyeballing a rendered image
+  (viewers scale coords). ground truth for panel state = the window's `fl=` line:
+  `NOT_TOUCHABLE` present = closed, gone = open; second check is
+  `uiautomator dump` grepping for `Type a draft`. screencap/screenrecord here
+  return STALE frames (lagged minutes; video frames can predate the tap — the
+  wall clock in the frame tells you), so never conclude "panel didn't open" from
+  a frame alone. screenrecord files only get their moov after `--time-limit` —
+  wait past it or ffmpeg reports `moov atom not found`.
+- fixed: the panel window was touch-swallowing. a TYPE_APPLICATION_OVERLAY window
+  eats taps over its whole frame even when its root view is GONE, unless it has
+  `FLAG_NOT_TOUCHABLE` — the default panel (55,550)(880x1265) covered the toggle
+  at (44,825), so every icon tap died invisibly. `OverlayController` now creates
+  the panel with `FLAG_NOT_TOUCHABLE` and flips it in `togglePanel()`/`hide()`/
+  `show()` via `setWindowTouchable()`, and builds the panel BEFORE the toggle so
+  the icon stacks above it. when touching overlay code, keep both invariants.
 
 ## deploy / quota locations
 

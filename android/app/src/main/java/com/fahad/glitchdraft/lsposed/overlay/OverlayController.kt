@@ -145,8 +145,8 @@ object OverlayController {
                 val panX = savedPositions?.optJSONObject("android_panel")?.optInt("x", -1) ?: -1
                 val panY = savedPositions?.optJSONObject("android_panel")?.optInt("y", -1) ?: -1
                 Handler(Looper.getMainLooper()).post {
-                    buildToggle(activity, if (togX >= 0) togX else -1, if (togY >= 0) togY else -1)
                     buildPanel(activity, if (panX >= 0) panX else -1, if (panY >= 0) panY else -1)
+                    buildToggle(activity, if (togX >= 0) togX else -1, if (togY >= 0) togY else -1)
                     isAttached = true
                     XposedBridge.log("$TAG: Overlay attached for $packageName (togPos=$togX,$togY panPos=$panX,$panY)")
                 }
@@ -174,9 +174,9 @@ object OverlayController {
     fun hide() {
         Handler(Looper.getMainLooper()).post {
             toggleView?.visibility = View.GONE
-            if (isPanelVisible) {
-                panelView?.visibility = View.GONE
-            }
+            setWindowTouchable(toggleView, toggleParams, false)
+            if (isPanelVisible) panelView?.visibility = View.GONE
+            setWindowTouchable(panelView, panelParams, false)
         }
     }
 
@@ -184,9 +184,9 @@ object OverlayController {
     fun show() {
         Handler(Looper.getMainLooper()).post {
             toggleView?.visibility = View.VISIBLE
-            if (isPanelVisible) {
-                panelView?.visibility = View.VISIBLE
-            }
+            setWindowTouchable(toggleView, toggleParams, true)
+            if (isPanelVisible) panelView?.visibility = View.VISIBLE
+            setWindowTouchable(panelView, panelParams, isPanelVisible)
         }
     }
 
@@ -394,7 +394,8 @@ object OverlayController {
         val params = WindowManager.LayoutParams(
             dp(ctx, 320), dp(ctx, 460),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -440,9 +441,27 @@ object OverlayController {
     private fun togglePanel() {
         isPanelVisible = !isPanelVisible
         panelView?.visibility = if (isPanelVisible) View.VISIBLE else View.GONE
+        setWindowTouchable(panelView, panelParams, isPanelVisible)
         if (isPanelVisible) {
             chatIdLabel?.text = chatIdDebugText()
             loadDrafts()
+        }
+    }
+
+    private fun setWindowTouchable(view: View?, params: WindowManager.LayoutParams?, touchable: Boolean) {
+        if (view == null || params == null || windowManager == null) return
+        val masked = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        val hasFlag = masked != 0
+        if (hasFlag == !touchable) return
+        params.flags = if (touchable) {
+            params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        } else {
+            params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        try {
+            windowManager?.updateViewLayout(view, params)
+        } catch (e: Throwable) {
+            XposedBridge.log("$TAG: setWindowTouchable($touchable) failed: $e")
         }
     }
 
