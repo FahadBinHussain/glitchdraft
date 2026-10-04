@@ -6,6 +6,12 @@
 #
 # needs JDK 21 (app/build.gradle pins source/target/jvmTarget to 21). a JDK is
 # picked from JAVA_HOME or a known install location and printed before building.
+#
+# release commands also need the signing vars (GD_KEYSTORE_FILE,
+# GD_KEYSTORE_PASSWORD, GD_KEY_ALIAS) from the repo-root .env.local — restored
+# from the vault with `pwsh <automata-private>/tools/env-sync.ps1 -Repo glitchdraft`.
+# they are asserted before gradle runs, so a missing keystore fails loudly here
+# instead of producing an unsigned apk.
 
 param(
     [Parameter(Mandatory = $true)]
@@ -56,6 +62,47 @@ function Invoke-Gradle([string[]]$Tasks) {
     if ($LASTEXITCODE -ne 0) { throw "gradle $($Tasks -join ' ') failed with exit code $LASTEXITCODE" }
 }
 
+# release signing lives in the repo-root .env.local (gitignored, restored from the
+# Bitwarden vault by automata-private/tools/env-sync.ps1 -Repo glitchdraft).
+# only GD_* keys are imported, never overriding vars already in the shell, and
+# GD_KEYSTORE_FILE is resolved against the repo root so gradle sees an absolute path.
+function Import-SigningEnv {
+    $envFile = Join-Path $repo '.env.local'
+    if (Test-Path $envFile) {
+        foreach ($line in Get-Content $envFile) {
+            $t = $line.Trim()
+            if (-not $t -or $t.StartsWith('#')) { continue }
+            $i = $t.IndexOf('=')
+            if ($i -lt 1) { continue }
+            $k = $t.Substring(0, $i).Trim()
+            $v = $t.Substring($i + 1).Trim().Trim('"', "'")
+            if ($k -like 'GD_*' -and -not (Test-Path "env:$k")) {
+                Set-Item -Path "env:$k" -Value $v
+            }
+        }
+    }
+    if ($env:GD_KEYSTORE_FILE -and -not [IO.Path]::IsPathRooted($env:GD_KEYSTORE_FILE)) {
+        $env:GD_KEYSTORE_FILE = Join-Path $repo $env:GD_KEYSTORE_FILE
+    }
+    return $envFile
+}
+
+function Assert-SigningEnv([string]$EnvFile) {
+    $missing = @()
+    if (-not $env:GD_KEYSTORE_FILE) { $missing += 'GD_KEYSTORE_FILE' }
+    if (-not $env:GD_KEYSTORE_PASSWORD) { $missing += 'GD_KEYSTORE_PASSWORD' }
+    if (-not $env:GD_KEY_ALIAS) { $missing += 'GD_KEY_ALIAS' }
+    if ($missing) {
+        $sync = 'C:\Users\Admin\Downloads\automata-private\tools\env-sync.ps1'
+        throw "release signing env missing ($($missing -join ', ')). expected them in $EnvFile (gitignored). restore from the vault: pwsh $sync -Repo glitchdraft"
+    }
+    if (-not (Test-Path $env:GD_KEYSTORE_FILE)) {
+        $sync = 'C:\Users\Admin\Downloads\automata-private\tools\env-sync.ps1'
+        throw "keystore not found at $($env:GD_KEYSTORE_FILE). restore it from the vault: pwsh $sync -Repo glitchdraft"
+    }
+    Write-Host "release signing: $($env:GD_KEYSTORE_FILE) (alias $($env:GD_KEY_ALIAS))"
+}
+
 switch ($Command) {
     'run' {
         Invoke-Gradle @('installDebug')
@@ -66,9 +113,11 @@ switch ($Command) {
         Write-Host 'installed + launched com.fahad.glitchdraft.lsposed/.ui.MainActivity'
     }
     'release' {
+        Assert-SigningEnv (Import-SigningEnv)
         Invoke-Gradle @('assembleRelease')
     }
     'release-apk' {
+        Assert-SigningEnv (Import-SigningEnv)
         Invoke-Gradle @('assembleRelease')
         $releaseDir = Join-Path $project 'app\build\outputs\apk\release'
         $apks = Get-ChildItem $releaseDir -Filter '*.apk' -ErrorAction SilentlyContinue
@@ -76,7 +125,7 @@ switch ($Command) {
         if (-not $signed) {
             $unsigned = $apks | Where-Object { $_.Name -like '*unsigned*' } | Select-Object -First 1
             if ($unsigned) {
-                throw "release apk is unsigned ($($unsigned.FullName)) — app/build.gradle has no signingConfig. add a keystore, or install the debug build with 'pwsh tools/android.ps1 run'."
+                throw "release apk is unsigned ($($unsigned.FullName)) — GD_KEYSTORE_* did not reach gradle (env vars must come from tools/android.ps1, not a bare gradlew call). signed builds start at 'pwsh tools/android.ps1 release-apk'; debug sideload stays available via 'pwsh tools/android.ps1 run'."
             }
             throw "no apk produced in $releaseDir"
         }

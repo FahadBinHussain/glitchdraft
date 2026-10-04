@@ -20,10 +20,22 @@ button on `edge://extensions` is fallback.
   `android/gradle/wrapper/gradle-wrapper.jar`) is committed. an older .gitignore
   rule kept the jar out under "download on demand" — gradlew cannot run without
   it, so that rule was removed.
-- release is unsigned: app/build.gradle has no signingConfig, so
-  `android:release:apk` stops with an explicit error instead of copying an
-  unsigned apk to backend/public. sideload with `android:run` until a keystore
-  exists (keystores stay gitignored / in the vault).
+- release is signed, and only from this repo's helper: `app/build.gradle` wires
+  `signingConfigs.release` from `GD_KEYSTORE_FILE` / `GD_KEYSTORE_PASSWORD` /
+  `GD_KEY_ALIAS` (+ optional `GD_KEY_PASSWORD`), and `tools/android.ps1` asserts
+  them before gradle runs, so a missing keystore fails loudly instead of
+  shipping an unsigned apk. credentials never enter the repo: the PKCS12 keystore
+  is `android/glitchdraft-release.p12` (gitignored alongside `*.p12`/`*.pfx`) and
+  the vars live in the vault item `github.com/FahadBinHussain/glitchdraft /
+  .env (development)` (notes) — restore both with
+  `pwsh C:\Users\Admin\Downloads\automata-private\tools\env-sync.ps1 -Repo glitchdraft`,
+  which writes the repo-root `.env.local` (gitignored: `.env.local`, `**/.env.local`)
+  and the p12 itself. gotcha: `.p12` had to be added to the ignore rules by hand —
+  `.gitignore` only covered `*.jks`/`*.keystore`, and env-sync's `Is-KeyName`
+  already matched `.p12`, so only the ignore line was missing. install-time note:
+  the release apk is signed with a different key than the debug build already on
+  the phone, so switching means uninstall first (wipes the stored Neon config).
+  the copy in `backend/public/` is build output too — gitignored, not committed.
 - gotcha: `android/app/src/main/res/mipmap-mdpi/ic_launcher.png` was committed as
   a 0-byte blob, which only surfaced in `mergeReleaseResources`. re-exported at
   48x48 from the hdpi source.

@@ -20,10 +20,36 @@ android {
         versionName "1.1.0"
     }
 
+    // Release signing. Credentials come from the environment only — nothing is
+    // committed. tools/android.ps1 exports them after reading the repo-root
+    // .env.local, which env-sync.ps1 restores from the Bitwarden vault
+    // (slug github.com/FahadBinHussain/glitchdraft, .env (development) notes +
+    // android/glitchdraft-release.p12 key item). With the vars absent this block
+    // stays inert and android.ps1 refuses to hand out an unsigned apk.
+    signingConfigs {
+        release {
+            def ksEnv = System.getenv("GD_KEYSTORE_FILE")
+            if (ksEnv) {
+                def ks = new File(ksEnv)
+                if (!ks.isAbsolute()) {
+                    ks = new File(rootProject.projectDir.parentFile, ksEnv)
+                }
+                storeType = "PKCS12"
+                storeFile = ks
+                storePassword = System.getenv("GD_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("GD_KEY_ALIAS")
+                keyPassword = System.getenv("GD_KEY_PASSWORD") ?: System.getenv("GD_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            if (System.getenv("GD_KEYSTORE_FILE")) {
+                signingConfig = signingConfigs.release
+            }
         }
         debug {
             minifyEnabled false

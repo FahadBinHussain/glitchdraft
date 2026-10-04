@@ -14,13 +14,18 @@ android/.idea/
 android/*.iml
 android/**/*.iml
 
-# Generated APKs / AABs
+# Generated APKs / AABs (the signed copy lives in backend/public for download,
+# but build output is never committed)
 android/**/*.apk
 android/**/*.aab
+backend/public/*.apk
 
 # Keystore files (never commit signing keys)
 android/**/*.jks
 android/**/*.keystore
+android/**/*.p12
+android/**/*.pfx
+android/**/*.p12.*
 
 # Gradle wrapper jar IS committed - gradlew cannot run without it, so
 # "download on demand" was never a thing. see AGENTS.md.
@@ -33,6 +38,10 @@ android/lint-results*
 # Secrets / environment files - never commit credentials
 .env
 **/.env
+.env.local
+**/.env.local
+.env.*.local
+**/.env.*.local
 
 # Next backend
 next-backend/node_modules/
