@@ -36,7 +36,7 @@ button on `edge://extensions` is fallback.
   is `android/glitchdraft-release.p12` (gitignored alongside `*.p12`/`*.pfx`) and
   the vars live in the vault item `github.com/FahadBinHussain/glitchdraft /
   .env (development)` (notes) — restore both with
-  `pwsh C:\Users\Admin\Downloads\automata-private\tools\env-sync.ps1 -Repo glitchdraft`,
+  `pwsh C:\Users\Admin\Downloads\automata-private\bitwarden.com\env-sync.ps1 -Repo glitchdraft`,
   which writes the repo-root `.env.local` (gitignored: `.env.local`, `**/.env.local`)
   and the p12 itself. gotcha: `.p12` had to be added to the ignore rules by hand —
   `.gitignore` only covered `*.jks`/`*.keystore`, and env-sync's `Is-KeyName`

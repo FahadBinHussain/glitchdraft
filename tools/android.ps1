@@ -9,7 +9,7 @@
 #
 # release commands also need the signing vars (GD_KEYSTORE_FILE,
 # GD_KEYSTORE_PASSWORD, GD_KEY_ALIAS) from the repo-root .env.local — restored
-# from the vault with `pwsh <automata-private>/tools/env-sync.ps1 -Repo glitchdraft`.
+# from the vault with `pwsh <automata-private>/bitwarden.com/env-sync.ps1 -Repo glitchdraft`.
 # they are asserted before gradle runs, so a missing keystore fails loudly here
 # instead of producing an unsigned apk.
 
@@ -63,7 +63,7 @@ function Invoke-Gradle([string[]]$Tasks) {
 }
 
 # release signing lives in the repo-root .env.local (gitignored, restored from the
-# Bitwarden vault by automata-private/tools/env-sync.ps1 -Repo glitchdraft).
+# Bitwarden vault by automata-private/bitwarden.com/env-sync.ps1 -Repo glitchdraft).
 # only GD_* keys are imported, never overriding vars already in the shell, and
 # GD_KEYSTORE_FILE is resolved against the repo root so gradle sees an absolute path.
 function Import-SigningEnv {
@@ -93,11 +93,11 @@ function Assert-SigningEnv([string]$EnvFile) {
     if (-not $env:GD_KEYSTORE_PASSWORD) { $missing += 'GD_KEYSTORE_PASSWORD' }
     if (-not $env:GD_KEY_ALIAS) { $missing += 'GD_KEY_ALIAS' }
     if ($missing) {
-        $sync = 'C:\Users\Admin\Downloads\automata-private\tools\env-sync.ps1'
+        $sync = 'C:\Users\Admin\Downloads\automata-private\bitwarden.com\env-sync.ps1'
         throw "release signing env missing ($($missing -join ', ')). expected them in $EnvFile (gitignored). restore from the vault: pwsh $sync -Repo glitchdraft"
     }
     if (-not (Test-Path $env:GD_KEYSTORE_FILE)) {
-        $sync = 'C:\Users\Admin\Downloads\automata-private\tools\env-sync.ps1'
+        $sync = 'C:\Users\Admin\Downloads\automata-private\bitwarden.com\env-sync.ps1'
         throw "keystore not found at $($env:GD_KEYSTORE_FILE). restore it from the vault: pwsh $sync -Repo glitchdraft"
     }
     Write-Host "release signing: $($env:GD_KEYSTORE_FILE) (alias $($env:GD_KEY_ALIAS))"
