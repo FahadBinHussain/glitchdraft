@@ -19,6 +19,21 @@ async function getService() {
     throw new Error("No backend configured. Set Firebase config or Neon config in extension settings.");
 }
 
+// a reload/update orphans every already-open content script: its runtime dies
+// with the old service worker, so the panel freezes on stale data and the sync
+// tick stops with no error. refresh messaging tabs right after install/update
+// so they re-inject the fresh code (content_scripts matches, minus hostseba).
+chrome.runtime.onInstalled.addListener(() => {
+    chrome.tabs.query({
+        url: ["https://*.messenger.com/*", "https://*.facebook.com/messages/*",
+              "https://*.discord.com/channels/*", "https://web.whatsapp.com/*"]
+    }, (tabs) => {
+        for (const tab of tabs) {
+            if (tab.id !== undefined) chrome.tabs.reload(tab.id).catch(() => {});
+        }
+    });
+});
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // dev self-reload (tools/reload-extension.ps1 -> extension/reload.html):
     // Extensions Reloader never re-reads manifest.json, so manifest bumps go

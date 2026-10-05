@@ -9,6 +9,14 @@ which messages bg to blank its tab + call `chrome.runtime.reload()`, so manifest
 bumps are picked up too. Extensions Reloader (`start msedge
 http://reload.extensions`) is JS-only and never re-reads the manifest; the manual
 button on `edge://extensions` is fallback.
+- `chrome.runtime.reload()` orphans every already-open content script: its
+  runtime dies with the old service worker, so the panel freezes on stale data
+  and the sync tick stops — silently, no console error visible to the user
+  (seen as "android note doesn't show on web" with the backend row correct).
+  background now has a `chrome.runtime.onInstalled` handler that reloads open
+  messenger/facebook/discord/whatsapp tabs so fresh code re-injects (manifest
+  1.1.7). after any extension reload, confirm the messaging tabs refreshed —
+  if the symptom persists on a freshly loaded tab, it's a real sync bug.
 
 ## android / lsposed module
 
