@@ -1,4 +1,4 @@
-// draftSync.js — Real-time message sync helper for GlitchDraft
+// draftSync.js — Real-time sync and position polling helpers for GlitchDraft
 // Loaded as a separate content script before content.js.
 // Functions here are top-level (no IIFE) so content.js can call them directly.
 
@@ -31,26 +31,121 @@ function gdLazyRenameIfNeeded(response, currentChatId, getChatName) {
     });
 }
 
+// ── Shared pause/resume ──────────────────────────────────────────────────────
+// Backgrounded tabs stop polling entirely: a request every few seconds never
+// lets the compute reach its scale-to-zero idle window, so a hidden tab is the
+// only state where the CU clock actually stops. Coming back runs one catch-up
+// round immediately instead of waiting out the interval.
+const GD_POLL_MS = 10000;
+let _visibilityHandler = null;
+let _positionStarted = false;
+let _syncStarted = false;
+let _positionCbs = null;
+let _syncCbs = null;
+
+function gdRestartPolling() {
+    if (_positionPollInterval) {
+        clearInterval(_positionPollInterval);
+        _positionPollInterval = null;
+    }
+    if (_syncInterval) {
+        clearInterval(_syncInterval);
+        _syncInterval = null;
+    }
+    if (document.hidden) return;
+
+    if (_positionStarted && _positionCbs) {
+        const p = _positionCbs;
+        _positionPollInterval = setInterval(() => gdPollPositions(p.applyPositionsToUI, p.isDraggingFn, p.localDirtyFn), GD_POLL_MS);
+    }
+    if (_syncStarted && _syncCbs) {
+        _syncInterval = setInterval(gdSyncTick, GD_POLL_MS);
+    }
+}
+
+function gdBindVisibility() {
+    if (_visibilityHandler) document.removeEventListener('visibilitychange', _visibilityHandler);
+    _visibilityHandler = () => {
+        if (document.hidden) {
+            gdRestartPolling();
+            return;
+        }
+        if (_positionStarted && _positionCbs) {
+            const p = _positionCbs;
+            gdPollPositions(p.applyPositionsToUI, p.isDraggingFn, p.localDirtyFn);
+        }
+        if (_syncStarted) gdSyncTick();
+        gdRestartPolling();
+    };
+    document.addEventListener('visibilitychange', _visibilityHandler);
+}
+
+// ── Position listener ────────────────────────────────────────────────────────
+let _positionPollInterval = null;
+let _lastKnownPositionsHash = '';
+let _positionApplyFn = null;  // set by gdStartPositionListener
+let _isDraggingRef = null;    // { get: () => bool } set by gdStartPositionListener
+
+/**
+ * Start a 10-second polling loop that picks up remote position changes.
+ * Paused while the tab is hidden.
+ * @param {function} applyPositionsToUI   - fn(positions) that moves the UI
+ * @param {function} isDraggingFn         - fn() -> bool, true if user is currently dragging
+ * @param {function} [localDirtyFn]       - fn() -> bool, true if a local save is pending
+ */
+function gdStartPositionListener(applyPositionsToUI, isDraggingFn, localDirtyFn) {
+    _positionApplyFn = applyPositionsToUI;
+    _isDraggingRef   = isDraggingFn;
+    _positionCbs = { applyPositionsToUI, isDraggingFn, localDirtyFn };
+    _positionStarted = true;
+    gdBindVisibility();
+    gdRestartPolling();
+}
+
+function gdPollPositions(applyPositionsToUI, isDraggingFn, localDirtyFn) {
+    // Skip if user is dragging or if we just saved locally (avoid snap-back)
+    if ((localDirtyFn && localDirtyFn()) || (isDraggingFn && isDraggingFn())) return;
+
+    const currentSite = window.location.hostname;
+    const positionKey = `uiPositions_${currentSite}`;
+
+    chrome.runtime.sendMessage({ action: 'getSettings' }, (response) => {
+        if (!response || !response.success) return;
+        const sitePositions = response.settings?.uiPositions?.[positionKey];
+        if (!sitePositions) return;
+
+        const remoteHash = JSON.stringify(sitePositions);
+        if (remoteHash === _lastKnownPositionsHash) return; // No change
+
+        _lastKnownPositionsHash = remoteHash;
+
+        // Cache locally for next page load
+        const localCacheKey = `glitchdraft_pos_${currentSite}`;
+        chrome.storage.local.set({ [localCacheKey]: sitePositions });
+
+        // Apply to UI only if not dragging
+        if (!(isDraggingFn && isDraggingFn())) {
+            applyPositionsToUI(sitePositions);
+        }
+    });
+}
+
 // ── Real-time message sync ───────────────────────────────────────────────────
-// Polling stops entirely while the tab is backgrounded. A request every few
-// seconds never lets the compute reach its scale-to-zero idle window, so an
-// unfocused-but-hidden tab is the only state where the CU clock actually stops.
-const GD_SYNC_POLL_MS = 10000;
 let _syncInterval = null;
 let _lastKnownMessagesHash = null;
 let _lastSyncChatId = null;
-let _syncCbs = null;
-let _syncVisibilityHandler = null;
+let _isFirstPositionLoad = true;
 
 function gdSyncTick() {
     if (!_syncCbs || document.hidden) return;
-    const { getCurrentChatId, loadSavedMessages, showNotification } = _syncCbs;
+    const { getCurrentChatId, loadSavedMessages, showNotification, applyPositionsToUI, localDirtyFn } = _syncCbs;
 
     const chatId = getCurrentChatId();
     if (!chatId) return;
     const chatChanged = chatId !== _lastSyncChatId;
     _lastSyncChatId = chatId;
 
+    // Check for message changes
     chrome.runtime.sendMessage({ action: 'getDraft', chatId }, (response) => {
         if (!response || !response.success) return;
         const messages = response.messages || [];
@@ -63,40 +158,47 @@ function gdSyncTick() {
         if (!isBaseline) showNotification('Messages synced from another device', '', 'success');
         loadSavedMessages();
     });
-}
 
-function gdRestartSyncTimer() {
-    if (_syncInterval) {
-        clearInterval(_syncInterval);
-        _syncInterval = null;
-    }
-    if (document.hidden || !_syncCbs) return;
-    _syncInterval = setInterval(gdSyncTick, GD_SYNC_POLL_MS);
-}
+    // Check for position changes
+    chrome.runtime.sendMessage({ action: 'getSettings' }, (response) => {
+        if (!response || !response.success) return;
+        const settings = response.settings || {};
+        const currentSite = window.location.hostname;
+        const positionKey = `uiPositions_${currentSite}`;
+        const sitePositions = settings.uiPositions?.[positionKey];
 
-function gdBindSyncVisibility() {
-    if (_syncVisibilityHandler) document.removeEventListener('visibilitychange', _syncVisibilityHandler);
-    _syncVisibilityHandler = () => {
-        if (document.hidden) {
-            gdRestartSyncTimer();
-            return;
+        const positionsHash = JSON.stringify(sitePositions || {});
+        if (positionsHash !== _lastKnownPositionsHash && sitePositions) {
+            const isRealChange = _lastKnownPositionsHash !== '' && !_isFirstPositionLoad;
+            _lastKnownPositionsHash = positionsHash;
+            _isFirstPositionLoad = false;
+
+            if (localDirtyFn && localDirtyFn()) return;
+
+            if (isRealChange) {
+                showNotification('UI position synced from another device', '', 'success');
+            }
+
+            const localCacheKey = `glitchdraft_pos_${currentSite}`;
+            chrome.storage.local.set({ [localCacheKey]: sitePositions });
+            applyPositionsToUI(sitePositions);
         }
-        gdSyncTick(); // catch up immediately on return instead of waiting out the interval
-        gdRestartSyncTimer();
-    };
-    document.addEventListener('visibilitychange', _syncVisibilityHandler);
+    });
 }
 
 /**
- * Start a 10-second polling loop that reloads messages when they change on
- * another device. The loop is paused while the tab is hidden.
+ * Start a 10-second polling loop that reloads messages and UI positions when
+ * they change on another device. The loop is paused while the tab is hidden.
  *
  * @param {function} getCurrentChatId
  * @param {function} loadSavedMessages
  * @param {function} showNotification
+ * @param {function} applyPositionsToUI
+ * @param {function} localDirtyFn   - fn() -> bool
  */
-function gdStartRealtimeSync(getCurrentChatId, loadSavedMessages, showNotification) {
-    _syncCbs = { getCurrentChatId, loadSavedMessages, showNotification };
-    gdBindSyncVisibility();
-    gdRestartSyncTimer();
+function gdStartRealtimeSync(getCurrentChatId, loadSavedMessages, showNotification, applyPositionsToUI, localDirtyFn) {
+    _syncCbs = { getCurrentChatId, loadSavedMessages, showNotification, applyPositionsToUI, localDirtyFn };
+    _syncStarted = true;
+    gdBindVisibility();
+    gdRestartPolling();
 }

@@ -1185,6 +1185,8 @@
     // Position-save state
     let resizeTimeout;
     let dragSaveTimeout;
+    let localPositionDirty = false; // Suppress remote position sync after local drag/resize
+    let localPositionDirtyTimeout = null;
     let isApplyingRemoteResize = false; // Prevent ResizeObserver feedback loop while applying remote
     let lastSavedWidth = 0;
     let lastSavedHeight = 0;
@@ -1732,6 +1734,10 @@
         const positionKey = `uiPositions_${currentSite}`;
         const localCacheKey = `glitchdraft_pos_${currentSite}`;
 
+        // Block remote position sync from overwriting the local save
+        localPositionDirty = true;
+        clearTimeout(localPositionDirtyTimeout);
+
         // 1. Local cache (instant apply on next refresh, no flash)
         chrome.storage.local.get(localCacheKey, (cached) => {
             const existing = cached[localCacheKey] || {};
@@ -1742,6 +1748,7 @@
         // 2. Backend — merge our site's key into the existing uiPositions map
         chrome.runtime.sendMessage({ action: 'getSettings' }, (resp) => {
             if (!resp || !resp.success) {
+                localPositionDirty = false;
                 showNotification('Position save failed', resp?.message || 'getSettings failed', 'error');
                 return;
             }
@@ -1755,6 +1762,10 @@
                 } else {
                     showNotification('Position save failed', r?.message || 'saveSettings failed', 'error');
                 }
+                // Allow remote sync again after a 3s grace period
+                localPositionDirtyTimeout = setTimeout(() => {
+                    localPositionDirty = false;
+                }, 3000);
             });
         });
     }
@@ -3068,14 +3079,21 @@
         // Start observing the target node for configured mutations
         observer.observe(document.body, config);
         
-        // Start real-time sync polling (messages only — positions load once on init)
+        // Start real-time sync polling (messages + UI positions, 10s, hidden-tab paused)
         startRealtimeSync();
     }
 
-    // Real-time message sync — implementation lives in draftSync.js
+    // Real-time sync — implementation lives in draftSync.js (shared file, byte-identical
+    // with the android assets copy; contract: same 5-arg signature on both content.js)
 
     function startRealtimeSync() {
-        gdStartRealtimeSync(getCurrentChatId, loadSavedMessages, showNotification);
+        gdStartRealtimeSync(
+            getCurrentChatId,
+            loadSavedMessages,
+            showNotification,
+            applyPositionsToUI,
+            () => localPositionDirty
+        );
     }
 
     // Theme toggle function

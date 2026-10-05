@@ -117,8 +117,23 @@ button on `edge://extensions` is fallback.
   tab was open, ~12 CU-h in 4 days ≈ the whole 100 CU-h monthly quota in one cycle.
   Now 10s and fully paused on `document.hidden` — only a hidden tab lets the compute
   reach scale-to-zero, a visible tab keeps it awake no matter the interval.
-  `extension/draftSync.js` and `android/app/src/main/assets/glitchdraft/draftSync.js`
-  are the same script: edit both.
+- shared vs forked files between `extension/` and
+  `android/app/src/main/assets/glitchdraft/` (contract, 2026-10-05):
+  **byte-identical shared files** = `draftSync.js`, `draftImport.js`, `styles.css`
+  (verify with `Get-FileHash` on both copies; after editing one, copy it across —
+  the copies had drifted: assets kept a shared-pause + position-polling rewrite
+  the extension never got, so the extension gained live position sync as part of
+  the re-sync). `content.js` is **forked by design**: different format style plus
+  platform glue (the injected copy exposes `window.GlitchDraftUseMessage` for the
+  native overlay, wires its WebView layout, and also starts
+  `gdStartPositionListener`; the extension copy does not). the shared call
+  contract is `gdStartRealtimeSync(getCurrentChatId, loadSavedMessages,
+  showNotification, applyPositionsToUI, localDirtyFn)` — change that signature in
+  BOTH `content.js` files in the same commit. `chrome.runtime.*` works on both
+  sides: the injected copy talks to `glitchdraft_shim.js`, which bridges to the
+  module. both position-save paths must keep the `localPositionDirty` flag
+  (set on local save, 3s grace after save completes) or the 10s poll snaps the
+  UI back mid-drag.
 
 ## known issues
 
