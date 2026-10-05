@@ -167,3 +167,16 @@ button on `edge://extensions` is fallback.
   content change — same visible-only rule as web `draftSync.js` for neon quota.
   verify like the tick test: open panel, PUT a marker draft via the backend,
   `uiautomator dump` within ~13s for the marker, PUT the original back, dump again.
+- backend row hygiene (2026-10-05): one canonical row per thread. duplicate slug
+  rows (rename leftovers: Peak ×6, Fatima ×6, Fahmida ×3, …) merged — union of
+  messages with exact `timestamp|html` dedupe, newest-`lastModified` row is
+  canonical, `contactName` = the candidate whose slug matches the canonical id;
+  16 stale/empty rows deleted; id slugs renamed to match `contactName` so
+  `pickBestRow` criterion 1 holds everywhere. backup (personal drafts — never
+  commit): `C:\tmp\glitchdraft-drafts-backup-20261005.json`. order matters: PUT
+  the canonical BEFORE deleting sources — a failed PUT with succeeded deletes
+  leaves a gap only the backup can fill (hit exactly that: pwsh
+  `ConvertTo-Json` on the wrapped plan threw "Argument types do not match",
+  all PUTs 500'd, deletes ran; rebuilt bodies from plain hashtables and
+  restored from backup). verification rule: every original `(ts|html)` must be
+  findable in the final canonical row, and final row count = backup − deleted.
