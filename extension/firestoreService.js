@@ -45,11 +45,28 @@ class FirestoreService {
             if (listRes.ok) {
                 const data = await listRes.json();
                 const docs = data.documents || [];
-                // 1) Find any messenger doc (web or android) whose ID ends with the same name slug
-                const match = docs.find(d => {
-                    const docId = d.name.split('/').pop();
-                    return /^messenger_(web|android)_/.test(docId) && docId.endsWith('_' + nameSlug);
-                });
+                // 1) Find any messenger doc (web or android) whose ID ends with the same
+                //    name slug, ranked: contactName slug match > web row > newest
+                //    lastModified (same ranking as Android's DraftRepository).
+                const esc = nameSlug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                const anchor = new RegExp("^messenger_(web|android)_\\d+_" + esc + "$");
+                const slugify = (s) => String(s || "").trim().toLowerCase()
+                    .replace(/[^\p{L}\p{N}]/gu, "_").replace(/_+/g, "_")
+                    .replace(/^_|_$/g, "").substring(0, 50);
+                const match = docs
+                    .filter(d => anchor.test(d.name.split('/').pop()))
+                    .sort((a, b) => {
+                        const aId = a.name.split('/').pop(), bId = b.name.split('/').pop();
+                        const aName = slugify(a.fields?.contactName?.stringValue) === nameSlug ? 1 : 0;
+                        const bName = slugify(b.fields?.contactName?.stringValue) === nameSlug ? 1 : 0;
+                        if (bName !== aName) return bName - aName;
+                        const aWeb = aId.startsWith("messenger_web_") ? 1 : 0;
+                        const bWeb = bId.startsWith("messenger_web_") ? 1 : 0;
+                        if (bWeb !== aWeb) return bWeb - aWeb;
+                        const aLm = parseInt(a.fields?.lastModified?.integerValue || "0");
+                        const bLm = parseInt(b.fields?.lastModified?.integerValue || "0");
+                        return bLm - aLm;
+                    })[0];
                 if (match) {
                     const messages = (match.fields?.messages?.arrayValue?.values || []).map(v => ({ html: v.mapValue?.fields?.html?.stringValue || "", timestamp: parseInt(v.mapValue?.fields?.timestamp?.integerValue || "0") }));
                     const contactName = match.fields?.contactName?.stringValue || null;

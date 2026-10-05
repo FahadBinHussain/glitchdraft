@@ -16,8 +16,15 @@ class DraftRepository(private val context: Context) {
 
     data class Draft(val html: String, val timestamp: Long)
 
+    private data class DraftRowMeta(
+        val id: String,
+        val contactName: String?,
+        val lastModified: Long
+    )
+
     companion object {
         private const val FS_BASE = "https://firestore.googleapis.com/v1/projects"
+        private const val TAG = "[DraftRepo]"
     }
 
     private sealed class StorageConfig {
@@ -80,6 +87,38 @@ class DraftRepository(private val context: Context) {
         return URLEncoder.encode(threadId, "UTF-8").replace("+", "%20")
     }
 
+    // Mirror of content.js sanitizeNameSlug: trim, lowercase, non-letter/digit -> _,
+    // collapse _, trim _, max 50. Used to compare a row's contactName with the
+    // chat's current display-name slug so web/android rows for the SAME person match.
+    private fun slugifyName(name: String?): String? {
+        if (name.isNullOrBlank()) return null
+        return name.trim()
+            .lowercase()
+            .replace(Regex("[^\\p{L}\\p{N}]"), "_")
+            .replace(Regex("_+"), "_")
+            .trim('_')
+            .take(50)
+            .takeIf { it.isNotEmpty() }
+    }
+
+    // Rank rows that carry this chat's name slug:
+    //   1. contactName slug == requested name slug  (same person on both platforms)
+    //   2. web row over android row  (web reads its exact id, android must follow it)
+    //   3. newest lastModified
+    // Never plain firstOrNull: a stale slug on someone else's thread (Fatima row
+    // ending _cat_fren, Fahmida row ending _fatima_afroz) would win arbitrarily.
+    private fun pickBestRow(rows: List<DraftRowMeta>, nameSlug: String): DraftRowMeta? {
+        val anchor = Regex("^messenger_(web|android)_\\d+_" + Regex.escape(nameSlug) + "$")
+        return rows
+            .filter { anchor.matches(it.id) }
+            .sortedWith(
+                compareByDescending<DraftRowMeta> { slugifyName(it.contactName) == nameSlug }
+                    .thenByDescending { if (it.id.startsWith("messenger_web_")) 1 else 0 }
+                    .thenByDescending { it.lastModified }
+            )
+            .firstOrNull()
+    }
+
     suspend fun getDraft(chatId: String): List<Draft> = withContext(Dispatchers.IO) {
         when (val cfg = readConfig()) {
             is StorageConfig.Neon -> getDraftFromNeon(cfg, chatId)
@@ -92,16 +131,13 @@ class DraftRepository(private val context: Context) {
         val nameSlugMatch = Regex("^messenger_(?:web|android)_\\d+_(.+)$").find(chatId)
         if (nameSlugMatch != null) {
             val nameSlug = nameSlugMatch.groupValues[1]
-            val allDocs = listAllDraftIdsFirebase(cfg)
-            val matchedId = allDocs.firstOrNull { docId ->
-                docId.matches(Regex("^messenger_(web|android)_.*")) && docId.endsWith("_$nameSlug")
-            }
-            if (matchedId != null) {
-                XposedBridge.log("[DraftRepo] Name-slug match: $chatId -> $matchedId")
-                val result = fetchDraftDocFirebase(cfg, matchedId)
+            val best = pickBestRow(listDraftRowsFirebase(cfg), nameSlug)
+            if (best != null) {
+                XposedBridge.log("$TAG slug '$nameSlug' pick=${best.id} name='${best.contactName}' lm=${best.lastModified} (req=$chatId)")
+                val result = fetchDraftDocFirebase(cfg, best.id)
                 if (result != null) return result
             }
-            return emptyList()
+            return fetchDraftDocFirebase(cfg, chatId) ?: emptyList()
         }
 
         return fetchDraftDocFirebase(cfg, chatId) ?: emptyList()
@@ -111,15 +147,13 @@ class DraftRepository(private val context: Context) {
         val nameSlugMatch = Regex("^messenger_(?:web|android)_\\d+_(.+)$").find(chatId)
         if (nameSlugMatch != null) {
             val nameSlug = nameSlugMatch.groupValues[1]
-            val allIds = listAllDraftIdsNeon(cfg)
-            val matchedId = allIds.firstOrNull { docId ->
-                docId.matches(Regex("^messenger_(web|android)_.*")) && docId.endsWith("_$nameSlug")
-            }
-            if (matchedId != null) {
-                val result = fetchDraftDocNeon(cfg, matchedId)
+            val best = pickBestRow(listDraftRowsNeon(cfg), nameSlug)
+            if (best != null) {
+                XposedBridge.log("$TAG slug '$nameSlug' pick=${best.id} name='${best.contactName}' lm=${best.lastModified} (req=$chatId)")
+                val result = fetchDraftDocNeon(cfg, best.id)
                 if (result != null) return result
             }
-            return emptyList()
+            return fetchDraftDocNeon(cfg, chatId) ?: emptyList()
         }
 
         return fetchDraftDocNeon(cfg, chatId) ?: emptyList()
@@ -156,7 +190,7 @@ class DraftRepository(private val context: Context) {
         }
     }
 
-    private fun listAllDraftIdsFirebase(cfg: StorageConfig.Firebase): List<String> {
+    private fun listDraftRowsFirebase(cfg: StorageConfig.Firebase): List<DraftRowMeta> {
         return try {
             val listUrl = URL("$FS_BASE/${cfg.projectId}/databases/(default)/documents/drafts?key=${cfg.apiKey}")
             val conn = listUrl.openConnection() as HttpURLConnection
@@ -168,25 +202,39 @@ class DraftRepository(private val context: Context) {
             val body = conn.inputStream.bufferedReader().readText()
             val data = JSONObject(body)
             val docs = data.optJSONArray("documents") ?: return emptyList()
-            val ids = mutableListOf<String>()
+            val rows = mutableListOf<DraftRowMeta>()
             for (i in 0 until docs.length()) {
-                val name = docs.getJSONObject(i).optString("name", "")
-                if (name.isNotBlank()) ids.add(name.substringAfterLast('/'))
+                val doc = docs.getJSONObject(i)
+                val name = doc.optString("name", "")
+                if (name.isBlank()) continue
+                val fields = doc.optJSONObject("fields")
+                val contactName = fields?.optJSONObject("contactName")?.optString("stringValue", "")
+                    ?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+                val lastModified = fields?.optJSONObject("lastModified")
+                    ?.optString("integerValue", "0")?.toLongOrNull() ?: 0L
+                rows.add(DraftRowMeta(id = name.substringAfterLast('/'), contactName = contactName, lastModified = lastModified))
             }
-            ids
+            rows
         } catch (_: Throwable) {
             emptyList()
         }
     }
 
-    private fun listAllDraftIdsNeon(cfg: StorageConfig.Neon): List<String> {
+    private fun listDraftRowsNeon(cfg: StorageConfig.Neon): List<DraftRowMeta> {
         return try {
             val conn = openNeonConnection(cfg, "/api/drafts", "GET")
             if (conn.responseCode != 200) return emptyList()
             val body = JSONObject(conn.inputStream.bufferedReader().readText())
             if (!body.optBoolean("success", false)) return emptyList()
             val draftsObj = body.optJSONObject("drafts") ?: return emptyList()
-            draftsObj.keys().asSequence().toList()
+            val rows = mutableListOf<DraftRowMeta>()
+            for (id in draftsObj.keys()) {
+                val row = draftsObj.optJSONObject(id) ?: continue
+                val contactName = row.optString("contactName", "")
+                    .trim().takeIf { it.isNotEmpty() && it != "null" }
+                rows.add(DraftRowMeta(id = id, contactName = contactName, lastModified = row.optLong("lastModified", 0L)))
+            }
+            rows
         } catch (_: Throwable) {
             emptyList()
         }
@@ -221,36 +269,35 @@ class DraftRepository(private val context: Context) {
         return list
     }
 
-    suspend fun saveDraft(chatId: String, messages: List<Draft>) = withContext(Dispatchers.IO) {
+    suspend fun saveDraft(chatId: String, messages: List<Draft>, contactName: String? = null) = withContext(Dispatchers.IO) {
         when (val cfg = readConfig()) {
             is StorageConfig.Neon -> {
-                val resolvedId = resolveMessengerIdNeon(cfg, chatId) ?: chatId
-                writeDraftDocNeon(cfg, resolvedId, messages)
+                val row = resolveMessengerRowNeon(cfg, chatId)
+                val targetId = row?.id ?: chatId
+                // never null out an existing row's contactName: name-based matching
+                // depends on it. Caller's live display name wins, else keep stored.
+                val effectiveName = contactName?.trim()?.takeIf { it.isNotEmpty() } ?: row?.contactName
+                XposedBridge.log("$TAG save target=$targetId name='$effectiveName' (req=$chatId)")
+                writeDraftDocNeon(cfg, targetId, messages, effectiveName)
             }
             is StorageConfig.Firebase -> {
-                val resolvedId = resolveMessengerIdFirebase(cfg, chatId) ?: chatId
-                writeDraftDocFirebase(cfg, resolvedId, messages)
+                val row = resolveMessengerRowFirebase(cfg, chatId)
+                writeDraftDocFirebase(cfg, row?.id ?: chatId, messages)
             }
             null -> Unit
         }
     }
 
-    private fun resolveMessengerIdFirebase(cfg: StorageConfig.Firebase, chatId: String): String? {
+    private fun resolveMessengerRowFirebase(cfg: StorageConfig.Firebase, chatId: String): DraftRowMeta? {
         val nameSlugMatch = Regex("^messenger_(?:web|android)_\\d+_(.+)$").find(chatId) ?: return null
         val nameSlug = nameSlugMatch.groupValues[1]
-        val allDocs = listAllDraftIdsFirebase(cfg)
-        return allDocs.firstOrNull { docId ->
-            docId.matches(Regex("^messenger_(web|android)_.*")) && docId.endsWith("_$nameSlug")
-        }
+        return pickBestRow(listDraftRowsFirebase(cfg), nameSlug)
     }
 
-    private fun resolveMessengerIdNeon(cfg: StorageConfig.Neon, chatId: String): String? {
+    private fun resolveMessengerRowNeon(cfg: StorageConfig.Neon, chatId: String): DraftRowMeta? {
         val nameSlugMatch = Regex("^messenger_(?:web|android)_\\d+_(.+)$").find(chatId) ?: return null
         val nameSlug = nameSlugMatch.groupValues[1]
-        val allDocs = listAllDraftIdsNeon(cfg)
-        return allDocs.firstOrNull { docId ->
-            docId.matches(Regex("^messenger_(web|android)_.*")) && docId.endsWith("_$nameSlug")
-        }
+        return pickBestRow(listDraftRowsNeon(cfg), nameSlug)
     }
 
     private fun writeDraftDocFirebase(cfg: StorageConfig.Firebase, chatId: String, messages: List<Draft>) {
@@ -289,7 +336,7 @@ class DraftRepository(private val context: Context) {
         conn.responseCode
     }
 
-    private fun writeDraftDocNeon(cfg: StorageConfig.Neon, chatId: String, messages: List<Draft>) {
+    private fun writeDraftDocNeon(cfg: StorageConfig.Neon, chatId: String, messages: List<Draft>, contactName: String?) {
         val conn = openNeonConnection(cfg, "/api/drafts/${encodeThreadId(chatId)}", "PUT")
         conn.doOutput = true
 
@@ -303,7 +350,7 @@ class DraftRepository(private val context: Context) {
 
         val body = JSONObject().apply {
             put("messages", msgsArray)
-            put("contactName", JSONObject.NULL)
+            put("contactName", contactName ?: JSONObject.NULL)
         }
 
         OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
@@ -313,13 +360,13 @@ class DraftRepository(private val context: Context) {
     suspend fun deleteDraft(chatId: String) = withContext(Dispatchers.IO) {
         when (val cfg = readConfig()) {
             is StorageConfig.Neon -> {
-                val resolvedId = resolveMessengerIdNeon(cfg, chatId) ?: chatId
-                val conn = openNeonConnection(cfg, "/api/drafts/${encodeThreadId(resolvedId)}", "DELETE")
+                val targetId = resolveMessengerRowNeon(cfg, chatId)?.id ?: chatId
+                val conn = openNeonConnection(cfg, "/api/drafts/${encodeThreadId(targetId)}", "DELETE")
                 conn.responseCode
             }
             is StorageConfig.Firebase -> {
-                val resolvedId = resolveMessengerIdFirebase(cfg, chatId) ?: chatId
-                val url = URL(docUrl(cfg, "drafts/$resolvedId"))
+                val targetId = resolveMessengerRowFirebase(cfg, chatId)?.id ?: chatId
+                val url = URL(docUrl(cfg, "drafts/$targetId"))
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "DELETE"
                 conn.connectTimeout = 8000

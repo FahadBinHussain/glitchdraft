@@ -1165,7 +1165,7 @@ object OverlayController {
             try {
                 val existing = r.getDraft(chatId).toMutableList()
                 existing.add(DraftRepository.Draft(html = text, timestamp = System.currentTimeMillis()))
-                r.saveDraft(chatId, existing)
+                r.saveDraft(chatId, existing, _currentChatName)
                 Handler(Looper.getMainLooper()).post {
                     input.text.clear()
                     loadDrafts()

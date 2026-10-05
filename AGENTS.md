@@ -119,3 +119,35 @@ button on `edge://extensions` is fallback.
   `android/.../content.js`) and only rendered because the sync tick's
   `loadSavedMessages()` covered for it. It now calls `loadSavedMessages()` directly,
   which is the real fetch-and-render path. don't reintroduce a second loader.
+
+## cross-platform draft matching (web <-> android)
+
+- chat ids: `messenger_web_<fbid>_<nameSlug>` (web, from url `/t/<id>`) vs
+  `messenger_android_<threadKey>_<nameSlug>`. numeric spaces are disjoint, so the
+  only shared key is the name slug — and a slug alone is ambiguous: ids go stale
+  on renames (Fatima's thread also has a `..._cat_fren` row, Fahmida's also has a
+  `..._fatima_afroz` row), so `firstOrNull { endsWith(slug) }` picked the wrong
+  person's draft (Cat Fren showed Fatima's note).
+- rule: rank slug candidates by (1) `slugify(contactName) == requested slug`,
+  (2) web row over android row (web reads its exact id, android follows it),
+  (3) newest `lastModified`. implemented identically in
+  `DraftRepository.pickBestRow` (kotlin), `neonService.findDocByNameSlug`,
+  the `firestoreService` slug sort, and `glitchdraft_shim.neonPickBySlug` —
+  change one, change all. anchor is `^messenger_(web|android)_\d+_<slug>$`
+  (plain `endsWith` over-matches: slug `messenger` would hit `_1_messenger`).
+  `slugify` must stay a mirror of `content.js sanitizeNameSlug`.
+- never PUT `contactName: null` — the backend `/api/drafts/[threadId]` PUT
+  replaces wholesale, and a wiped contactName silently breaks name matching
+  afterwards. saves pass the live display name when known and otherwise re-send
+  the stored one (`DraftRepository.saveDraft`, shim `handleSaveDraft`).
+- slug picks are read-only: no `needsRename` on slug hits (only legacy bare/no-slug
+  numeric ids rename) — a read must never move/delete another chat's row.
+- verify on device: open the chat, tap the icon (112,973 real screen px), then
+  `su -c 'grep -a -h DraftRepo /data/adb/lspd/log/*.log | tail'` — the log line
+  prints `slug '...' pick=... name='...' (req=...)`; panel header shows the row id.
+- gotchas: `adb install -r` can drop the `SYSTEM_ALERT_WINDOW` appop — overlay logs
+  "overlay permission not granted — skipping attach"; re-grant with
+  `adb shell appops set com.facebook.orca SYSTEM_ALERT_WINDOW allow` (plus the
+  module pkg). screencap frames go stale/out-of-order during rapid tap sequences —
+  confirm state with `uiautomator dump` (grep `Type a draft`) + dumpsys `fl=` flags
+  instead of trusting a screenshot.

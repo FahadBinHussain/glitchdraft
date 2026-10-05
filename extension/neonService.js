@@ -57,7 +57,29 @@ class NeonService {
 
     async getDraft(threadId) {
         const data = await this.request(`/api/drafts/${encodeURIComponent(threadId)}`, { method: "GET" });
-        if (!data.exists && this.isMessengerThreadId(threadId)) {
+        if (data.exists) {
+            return { messages: data.messages || [], contactName: data.contactName || null, exists: true };
+        }
+        if (this.isMessengerThreadId(threadId)) {
+            // Cross-platform name match: web/android numeric spaces never overlap,
+            // so the only shared key is the display-name slug. Rank candidates by
+            // contactName > web row > newest lastModified (mirrors Android's picker).
+            const slugMatch = threadId.match(/^messenger_(?:web|android)_\d+_(.+)$/);
+            if (slugMatch) {
+                const picked = await this.findDocByNameSlug(slugMatch[1], threadId);
+                if (picked) {
+                    const found = await this.request(`/api/drafts/${encodeURIComponent(picked)}`, { method: "GET" });
+                    if (found.exists) {
+                        console.log("[GlitchDraft] name-slug match", threadId, "->", picked);
+                        return {
+                            messages: found.messages || [],
+                            contactName: found.contactName || null,
+                            exists: true,
+                            foundDocId: picked
+                        };
+                    }
+                }
+            }
             const existingId = await this.findDocByMessengerNumericId(this.getMessengerNumericId(threadId), threadId);
             if (existingId && existingId !== threadId) {
                 const found = await this.request(`/api/drafts/${encodeURIComponent(existingId)}`, { method: "GET" });
@@ -77,6 +99,34 @@ class NeonService {
             contactName: data.contactName || null,
             exists: !!data.exists
         };
+    }
+
+    // Rank rows whose id ends with this chat's name slug:
+    //   1. contactName slug == requested slug (same person on both platforms)
+    //   2. web row (web reads its exact id; the other platform must follow it)
+    //   3. newest lastModified
+    // No needsRename on purpose: reading a foreign row must never move/delete it.
+    async findDocByNameSlug(nameSlug, excludeId = null) {
+        const allDrafts = await this.getAllDrafts();
+        const esc = String(nameSlug).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const anchor = new RegExp("^messenger_(web|android)_\\d+_" + esc + "$");
+        const slugify = (s) => String(s || "").trim().toLowerCase()
+            .replace(/[^\p{L}\p{N}]/gu, "_")
+            .replace(/_+/g, "_")
+            .replace(/^_|_$/g, "")
+            .substring(0, 50);
+        const ids = Object.keys(allDrafts).filter((id) => id !== excludeId && anchor.test(id));
+        if (ids.length === 0) return null;
+        ids.sort((a, b) => {
+            const aName = slugify(allDrafts[a]?.contactName) === nameSlug ? 1 : 0;
+            const bName = slugify(allDrafts[b]?.contactName) === nameSlug ? 1 : 0;
+            if (bName !== aName) return bName - aName;
+            const aWeb = a.startsWith("messenger_web_") ? 1 : 0;
+            const bWeb = b.startsWith("messenger_web_") ? 1 : 0;
+            if (bWeb !== aWeb) return bWeb - aWeb;
+            return (allDrafts[b]?.lastModified || 0) - (allDrafts[a]?.lastModified || 0);
+        });
+        return ids[0];
     }
 
     async renameDraft(fromId, toId, messages, contactName) {

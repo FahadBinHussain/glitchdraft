@@ -137,12 +137,49 @@
     // Background handler functions (inline replacement for background.js)
     // -------------------------------------------------------------------------
 
-    async function handleSaveDraft(chatId, messages) {
+    // Cross-platform name match (mirrors DraftRepository/neonService): web/android
+    // numeric spaces never overlap, so rows are ranked by contactName slug >
+    // web row > newest lastModified. Read-only pick — never moves/deletes rows.
+    async function neonPickBySlug(nameSlug) {
+        const list = await neonRequest('/api/drafts', 'GET');
+        const drafts = list?.drafts || {};
+        const esc = String(nameSlug).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const anchor = new RegExp('^messenger_(web|android)_\\d+_' + esc + '$');
+        const slugify = (s) => String(s || '').trim().toLowerCase()
+            .replace(/[^\p{L}\p{N}]/gu, '_').replace(/_+/g, '_')
+            .replace(/^_|_$/g, '').substring(0, 50);
+        const ids = Object.keys(drafts).filter(id => anchor.test(id));
+        if (ids.length === 0) return null;
+        ids.sort((a, b) => {
+            const aName = slugify(drafts[a]?.contactName) === nameSlug ? 1 : 0;
+            const bName = slugify(drafts[b]?.contactName) === nameSlug ? 1 : 0;
+            if (bName !== aName) return bName - aName;
+            const aWeb = a.startsWith('messenger_web_') ? 1 : 0;
+            const bWeb = b.startsWith('messenger_web_') ? 1 : 0;
+            if (bWeb !== aWeb) return bWeb - aWeb;
+            return (drafts[b]?.lastModified || 0) - (drafts[a]?.lastModified || 0);
+        });
+        return { id: ids[0], contactName: drafts[ids[0]]?.contactName || null };
+    }
+
+    async function neonResolveThreadId(chatId) {
+        const slugMatch = String(chatId).match(/^messenger_(?:web|android)_\d+_(.+)$/);
+        if (slugMatch) {
+            const picked = await neonPickBySlug(slugMatch[1]);
+            if (picked) return picked;
+        }
+        return { id: chatId, contactName: null };
+    }
+
+    async function handleSaveDraft(chatId, messages, contactName) {
         const neon = await getNeonConfig();
         if (neon?.apiBaseUrl && neon?.apiKey) {
-            await neonRequest(`/api/drafts/${encodeURIComponent(chatId)}`, 'PUT', {
+            const resolved = await neonResolveThreadId(chatId);
+            // never null out an existing row's contactName: name matching depends on it
+            const effectiveName = (contactName && String(contactName).trim()) || resolved.contactName || null;
+            await neonRequest(`/api/drafts/${encodeURIComponent(resolved.id)}`, 'PUT', {
                 messages: Array.isArray(messages) ? messages : [],
-                contactName: null
+                contactName: effectiveName
             });
             lsSet({ lastSyncTime: Date.now() }, null);
             return { success: true };
@@ -169,7 +206,13 @@
     async function handleGetDraft(chatId) {
         const neon = await getNeonConfig();
         if (neon?.apiBaseUrl && neon?.apiKey) {
-            const res = await neonRequest(`/api/drafts/${encodeURIComponent(chatId)}`, 'GET');
+            let res = await neonRequest(`/api/drafts/${encodeURIComponent(chatId)}`, 'GET');
+            if (!res?.exists) {
+                const resolved = await neonResolveThreadId(chatId);
+                if (resolved.id !== chatId) {
+                    res = await neonRequest(`/api/drafts/${encodeURIComponent(resolved.id)}`, 'GET');
+                }
+            }
             const messages = Array.isArray(res?.messages) ? res.messages : [];
             lsSet({ lastSyncTime: Date.now() }, null);
             return { success: true, messages };
@@ -188,7 +231,8 @@
     async function handleDeleteDraft(chatId) {
         const neon = await getNeonConfig();
         if (neon?.apiBaseUrl && neon?.apiKey) {
-            await neonRequest(`/api/drafts/${encodeURIComponent(chatId)}`, 'DELETE');
+            const resolved = await neonResolveThreadId(chatId);
+            await neonRequest(`/api/drafts/${encodeURIComponent(resolved.id)}`, 'DELETE');
             return { success: true };
         }
         await fsDelete(`drafts/${chatId}`);
@@ -248,7 +292,7 @@
     // -------------------------------------------------------------------------
 
     const messageHandlers = {
-        saveDraft:    req => handleSaveDraft(req.chatId, req.messages),
+        saveDraft:    req => handleSaveDraft(req.chatId, req.messages, req.contactName),
         getDraft:     req => handleGetDraft(req.chatId),
         deleteDraft:  req => handleDeleteDraft(req.chatId),
         saveSettings: req => handleSaveSettings(req.settings),
