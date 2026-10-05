@@ -159,3 +159,11 @@ button on `edge://extensions` is fallback.
   module pkg). screencap frames go stale/out-of-order during rapid tap sequences —
   confirm state with `uiautomator dump` (grep `Type a draft`) + dumpsys `fl=` flags
   instead of trusting a screenshot.
+- the open android panel used to fetch only on open/chat-change/local edits, so a
+  web-side edit or delete never appeared until the panel was reopened (seen as
+  "deleted lol on web, android still shows it" — backend row was already correct).
+  `OverlayController` now runs a 10s sync tick while the panel is visible
+  (start/stop wired in `togglePanel`/`show`/`hide`/`detach`), re-rendering only on
+  content change — same visible-only rule as web `draftSync.js` for neon quota.
+  verify like the tick test: open panel, PUT a marker draft via the backend,
+  `uiautomator dump` within ~13s for the marker, PUT the original back, dump again.

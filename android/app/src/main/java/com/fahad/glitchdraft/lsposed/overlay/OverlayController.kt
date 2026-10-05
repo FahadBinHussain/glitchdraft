@@ -64,6 +64,8 @@ import org.json.JSONObject
 object OverlayController {
 
     private const val TAG = "GlitchDraft-Overlay"
+    // mirrors extension draftSync.js: 10s tick, only while the panel is visible
+    private const val SYNC_TICK_MS = 10_000L
 
     // Accent colour that matches the extension
     private const val ACCENT  = 0xFF0084FF.toInt()
@@ -112,6 +114,31 @@ object OverlayController {
     private val savePositionHandler = Handler(Looper.getMainLooper())
     private val savePositionRunnable = Runnable { persistPositions() }
 
+    // Panel-open sync tick: refetch while the panel is visible so edits and
+    // deletes made on web show up without reopening the panel. re-render only
+    // when content actually changed (no 10s flicker).
+    private val syncHandler = Handler(Looper.getMainLooper())
+    private var lastRenderedDrafts: List<DraftRepository.Draft> = emptyList()
+    private val syncRunnable = object : Runnable {
+        override fun run() {
+            if (!isAttached || !isPanelVisible || panelView?.visibility != View.VISIBLE) {
+                stopPanelSync()
+                return
+            }
+            syncDrafts()
+            syncHandler.postDelayed(this, SYNC_TICK_MS)
+        }
+    }
+
+    private fun startPanelSync() {
+        syncHandler.removeCallbacks(syncRunnable)
+        syncHandler.postDelayed(syncRunnable, SYNC_TICK_MS)
+    }
+
+    private fun stopPanelSync() {
+        syncHandler.removeCallbacks(syncRunnable)
+    }
+
     // -------------------------------------------------------------------------
 
     fun isAttached() = isAttached
@@ -157,6 +184,7 @@ object OverlayController {
     }
 
     fun detach() {
+        stopPanelSync()
         scope.cancel()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         runCatching { windowManager?.removeView(toggleView) }
@@ -172,6 +200,7 @@ object OverlayController {
 
     /** Hide the toggle button (and panel) when the target app loses focus. */
     fun hide() {
+        stopPanelSync()
         Handler(Looper.getMainLooper()).post {
             toggleView?.visibility = View.GONE
             setWindowTouchable(toggleView, toggleParams, false)
@@ -187,6 +216,7 @@ object OverlayController {
             setWindowTouchable(toggleView, toggleParams, true)
             if (isPanelVisible) panelView?.visibility = View.VISIBLE
             setWindowTouchable(panelView, panelParams, isPanelVisible)
+            if (isPanelVisible) startPanelSync()
         }
     }
 
@@ -445,6 +475,9 @@ object OverlayController {
         if (isPanelVisible) {
             chatIdLabel?.text = chatIdDebugText()
             loadDrafts()
+            startPanelSync()
+        } else {
+            stopPanelSync()
         }
     }
 
@@ -505,19 +538,38 @@ object OverlayController {
         scope.launch {
             try {
                 val drafts = r.getDraft(chatId)
-                Handler(Looper.getMainLooper()).post {
-                    list.removeAllViews()
-                    if (drafts.isEmpty()) {
-                        showEmptyText(list, "No drafts saved yet")
-                    } else {
-                        drafts.forEach { draft -> addDraftRow(list, draft, chatId, r) }
-                    }
-                }
+                Handler(Looper.getMainLooper()).post { renderDrafts(drafts, chatId, r) }
             } catch (e: Throwable) {
                 Handler(Looper.getMainLooper()).post {
                     showEmptyText(list, "Error: ${e.message}")
                 }
             }
+        }
+    }
+
+    // sync-tick fetch: never clears first, re-renders only when server content
+    // changed — a transient network error just skips the tick (next one retries).
+    private fun syncDrafts() {
+        val r = repo ?: return
+        val chatId = currentChatId() ?: currentPackage
+        scope.launch {
+            val drafts = try { r.getDraft(chatId) } catch (_: Throwable) { return@launch }
+            Handler(Looper.getMainLooper()).post {
+                if (!isPanelVisible || panelView?.visibility != View.VISIBLE) return@post
+                if (drafts == lastRenderedDrafts) return@post
+                renderDrafts(drafts, chatId, r)
+            }
+        }
+    }
+
+    private fun renderDrafts(drafts: List<DraftRepository.Draft>, chatId: String, r: DraftRepository) {
+        val list = draftList ?: return
+        lastRenderedDrafts = drafts
+        list.removeAllViews()
+        if (drafts.isEmpty()) {
+            showEmptyText(list, "No drafts saved yet")
+        } else {
+            drafts.forEach { draft -> addDraftRow(list, draft, chatId, r) }
         }
     }
 
