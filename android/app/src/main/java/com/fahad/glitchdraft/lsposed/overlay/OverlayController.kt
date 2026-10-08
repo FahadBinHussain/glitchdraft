@@ -602,6 +602,34 @@ object OverlayController {
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ))
 
+        // Timestamps mirror the extension card (.saved-messages-timestamp /
+        // .saved-messages-modified): created always, "Modified:" only when the row
+        // was re-saved >1min after the message — same rule as both content.js forks.
+        val showModified = draft.lastModified > draft.timestamp + 60_000L
+
+        val timestampView = TextView(ctx).apply {
+            text = formatTimestamp(ctx, draft.timestamp)
+            textSize = 10f
+            setTextColor(GREY_TXT)
+            setPadding(0, 0, 0, if (showModified) 0 else dp(ctx, 6))
+        }
+        displayGroup.addView(timestampView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        if (showModified) {
+            val modifiedView = TextView(ctx).apply {
+                text = "Modified: " + formatTimestamp(ctx, draft.lastModified)
+                textSize = 10f
+                setTextColor(GREY_TXT)
+                alpha = 0.75f
+                setPadding(0, 0, 0, dp(ctx, 6))
+            }
+            displayGroup.addView(modifiedView, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+
         // Action buttons row: Use | Copy | Edit | Delete
         val actionsRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -1119,6 +1147,30 @@ object OverlayController {
      * [EditText] that looks like a message-compose input (visible, enabled,
      * focusable, not a password field).  Returns null if none is found.
      */
+    // mirrors extension content.js formatTimestamp(): "Today at h:mm" /
+    // "Yesterday at h:mm" / locale date + time, locale-aware 12h/24h
+    private fun formatTimestamp(ctx: Context, epochMs: Long): String {
+        if (epochMs <= 0L) return ""
+        val date = java.util.Date(epochMs)
+        val timeStr = android.text.format.DateFormat.getTimeFormat(ctx).format(date)
+        val day = java.util.Calendar.getInstance().apply { time = date }
+        val now = java.util.Calendar.getInstance()
+        if (day.get(java.util.Calendar.YEAR) == now.get(java.util.Calendar.YEAR) &&
+            day.get(java.util.Calendar.DAY_OF_YEAR) == now.get(java.util.Calendar.DAY_OF_YEAR)
+        ) {
+            return "Today at $timeStr"
+        }
+        val yesterday = (now.clone() as java.util.Calendar).apply {
+            add(java.util.Calendar.DAY_OF_YEAR, -1)
+        }
+        if (day.get(java.util.Calendar.YEAR) == yesterday.get(java.util.Calendar.YEAR) &&
+            day.get(java.util.Calendar.DAY_OF_YEAR) == yesterday.get(java.util.Calendar.DAY_OF_YEAR)
+        ) {
+            return "Yesterday at $timeStr"
+        }
+        return android.text.format.DateFormat.getDateFormat(ctx).format(date) + " " + timeStr
+    }
+
     /**
      * Converts [html] to a [android.text.Spanned] for display in a [TextView].
      *

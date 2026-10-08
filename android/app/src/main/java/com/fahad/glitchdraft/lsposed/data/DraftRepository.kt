@@ -14,7 +14,9 @@ import java.net.URLEncoder
 
 class DraftRepository(private val context: Context) {
 
-    data class Draft(val html: String, val timestamp: Long)
+    // lastModified = row-level epoch ms from the GET response (bumped on every
+    // PUT), same value for every message in the row — 0 when absent/older backend
+    data class Draft(val html: String, val timestamp: Long, val lastModified: Long = 0L)
 
     private data class DraftRowMeta(
         val id: String,
@@ -241,30 +243,34 @@ class DraftRepository(private val context: Context) {
     }
 
     private fun parseDraftMessagesFromFirestore(doc: JSONObject): List<Draft> {
-        val values = doc.optJSONObject("fields")
+        val fields = doc.optJSONObject("fields")
+        val values = fields
             ?.optJSONObject("messages")
             ?.optJSONObject("arrayValue")
             ?.optJSONArray("values") ?: return emptyList()
+        val lastModified = fields?.optJSONObject("lastModified")
+            ?.optString("integerValue", "0")?.toLongOrNull() ?: 0L
 
         val list = mutableListOf<Draft>()
         for (i in 0 until values.length()) {
-            val fields = values.getJSONObject(i)
+            val item = values.getJSONObject(i)
                 .optJSONObject("mapValue")?.optJSONObject("fields") ?: continue
-            val html = fields.optJSONObject("html")?.optString("stringValue", "") ?: ""
-            val ts = fields.optJSONObject("timestamp")?.optString("integerValue", "0")?.toLongOrNull() ?: 0L
-            list.add(Draft(html = html, timestamp = ts))
+            val html = item.optJSONObject("html")?.optString("stringValue", "") ?: ""
+            val ts = item.optJSONObject("timestamp")?.optString("integerValue", "0")?.toLongOrNull() ?: 0L
+            list.add(Draft(html = html, timestamp = ts, lastModified = lastModified))
         }
         return list
     }
 
     private fun parseDraftMessagesFromNeon(doc: JSONObject): List<Draft> {
         val values = doc.optJSONArray("messages") ?: return emptyList()
+        val lastModified = doc.optLong("lastModified", 0L)
         val list = mutableListOf<Draft>()
         for (i in 0 until values.length()) {
             val item = values.optJSONObject(i) ?: continue
             val html = item.optString("html", "")
             val ts = item.optLong("timestamp", 0L)
-            list.add(Draft(html = html, timestamp = ts))
+            list.add(Draft(html = html, timestamp = ts, lastModified = lastModified))
         }
         return list
     }

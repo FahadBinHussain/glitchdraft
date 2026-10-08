@@ -169,6 +169,17 @@ button on `edge://extensions` is fallback.
   `glitchdraft_shim.js handleGetDraft` (neon + firestore paths) on android —
   both `content.js` forks render the card's `Modified:` line from it, hidden
   unless it is >1min newer than the message timestamp (added 2026-10-08).
+- the android panel's cards are NOT drawn by the injected content.js: the
+  WebView fork only renders cards inside in-app webviews (whatsapp web etc).
+  On native messenger the panel is built by
+  `OverlayController.addDraftRow` (kotlin) — created timestamp, conditional
+  `Modified:` line, Use/Copy/Edit/Delete. card-level UI changes need the
+  native kotlin too. data path: `DraftRepository.Draft` carries the row-level
+  `lastModified` (parsed from the GET body in `parseDraftMessagesFromNeon` /
+  `parseDraftMessagesFromFirestore`, 0 when absent), render rule identical to
+  web: shown only when `lastModified > message.timestamp + 60s`; formatting
+  mirrors content.js `formatTimestamp` via the kotlin helper in
+  `OverlayController.formatTimestamp`.
 
 ## known issues
 
