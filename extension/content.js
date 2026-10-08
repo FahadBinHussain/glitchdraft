@@ -155,6 +155,13 @@
         margin-top: 4px;
     }
 
+    .saved-messages-modified {
+        font-size: 10px;
+        color: var(--text-secondary);
+        opacity: 0.75;
+        margin-top: 2px;
+    }
+
     .saved-messages-actions {
         display: flex;
         gap: 8px;
@@ -2065,6 +2072,7 @@
             }
             
             const savedMessages = response.messages || [];
+            const draftLastModified = Number(response.lastModified) || 0;
 
             // Lazy rename: if the doc was found under a legacy/no-slug ID, rename it to the correct chatId
             lazyRenameIfNeeded(response, chatId);
@@ -2110,6 +2118,14 @@
                 timestampDiv.textContent = formatTimestamp(message.timestamp);
                 timestampDiv.dataset.savedMessageUiElement = 'true';
 
+                let modifiedDiv = null;
+                if (draftLastModified && draftLastModified > message.timestamp + 60000) {
+                    modifiedDiv = document.createElement('div');
+                    modifiedDiv.className = 'saved-messages-modified';
+                    modifiedDiv.textContent = 'Modified: ' + formatTimestamp(draftLastModified);
+                    modifiedDiv.dataset.savedMessageUiElement = 'true';
+                }
+
                 const actionsDiv = document.createElement('div');
                 actionsDiv.className = 'saved-messages-actions';
                 actionsDiv.dataset.savedMessageUiElement = 'true';
@@ -2151,6 +2167,7 @@
 
                 messageElement.appendChild(messageText);
                 messageElement.appendChild(timestampDiv);
+                if (modifiedDiv) messageElement.appendChild(modifiedDiv);
                 messageElement.appendChild(actionsDiv);
 
                 ui.body.appendChild(messageElement);

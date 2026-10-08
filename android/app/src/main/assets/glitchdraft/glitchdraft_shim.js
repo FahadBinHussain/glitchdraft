@@ -215,7 +215,7 @@
             }
             const messages = Array.isArray(res?.messages) ? res.messages : [];
             lsSet({ lastSyncTime: Date.now() }, null);
-            return { success: true, messages };
+            return { success: true, messages, lastModified: Number(res?.lastModified) || 0 };
         }
 
         const doc = await fsGet(`drafts/${chatId}`);
@@ -224,8 +224,9 @@
             html: v.mapValue?.fields?.html?.stringValue || '',
             timestamp: parseInt(v.mapValue?.fields?.timestamp?.integerValue || '0')
         }));
+        const lastModified = parseInt(doc.fields?.lastModified?.integerValue || '0', 10);
         lsSet({ lastSyncTime: Date.now() }, null);
-        return { success: true, messages };
+        return { success: true, messages, lastModified };
     }
 
     async function handleDeleteDraft(chatId) {

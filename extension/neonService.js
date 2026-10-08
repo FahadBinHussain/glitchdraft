@@ -58,7 +58,7 @@ class NeonService {
     async getDraft(threadId) {
         const data = await this.request(`/api/drafts/${encodeURIComponent(threadId)}`, { method: "GET" });
         if (data.exists) {
-            return { messages: data.messages || [], contactName: data.contactName || null, exists: true };
+            return { messages: data.messages || [], contactName: data.contactName || null, lastModified: Number(data.lastModified) || 0, exists: true };
         }
         if (this.isMessengerThreadId(threadId)) {
             // Cross-platform name match: web/android numeric spaces never overlap,
@@ -74,6 +74,7 @@ class NeonService {
                         return {
                             messages: found.messages || [],
                             contactName: found.contactName || null,
+                            lastModified: Number(found.lastModified) || 0,
                             exists: true,
                             foundDocId: picked
                         };
@@ -86,6 +87,7 @@ class NeonService {
                 return {
                     messages: found.messages || [],
                     contactName: found.contactName || null,
+                    lastModified: Number(found.lastModified) || 0,
                     exists: !!found.exists,
                     foundDocId: existingId,
                     needsRename: !!found.exists,

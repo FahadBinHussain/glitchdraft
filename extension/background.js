@@ -164,6 +164,7 @@ async function handleGet(chatId) {
             success: true,
             messages: result.messages || [],
             contactName: result.contactName || null,
+            lastModified: Number(result.lastModified) || 0,
             exists: !!result.exists,
             needsRename: result.needsRename || false,
             renameFrom: result.renameFrom || null,

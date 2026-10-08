@@ -151,6 +151,13 @@
         margin-top: 4px;
     }
 
+    .saved-messages-modified {
+        font-size: 10px;
+        color: var(--text-secondary);
+        opacity: 0.75;
+        margin-top: 2px;
+    }
+
     .saved-messages-actions {
         display: flex;
         gap: 8px;
@@ -2102,6 +2109,7 @@
         }
 
         const savedMessages = response.messages || [];
+        const draftLastModified = Number(response.lastModified) || 0;
         lazyRenameIfNeeded(response, chatId);
 
         if (savedMessages.length === 0) {
@@ -2128,6 +2136,14 @@
           timestampDiv.className = "saved-messages-timestamp";
           timestampDiv.textContent = formatTimestamp(message.timestamp);
           timestampDiv.dataset.savedMessageUiElement = "true";
+
+          let modifiedDiv = null;
+          if (draftLastModified && draftLastModified > message.timestamp + 60000) {
+            modifiedDiv = document.createElement("div");
+            modifiedDiv.className = "saved-messages-modified";
+            modifiedDiv.textContent = "Modified: " + formatTimestamp(draftLastModified);
+            modifiedDiv.dataset.savedMessageUiElement = "true";
+          }
 
           const actionsDiv = document.createElement("div");
           actionsDiv.className = "saved-messages-actions";

@@ -25,6 +25,7 @@ export async function GET(
       success: true,
       messages: [],
       contactName: null,
+      lastModified: 0,
       exists: false
     });
   }
@@ -33,6 +34,7 @@ export async function GET(
     success: true,
     messages: row.messages ?? [],
     contactName: row.contactName ?? null,
+    lastModified: Number(row.lastModified) || 0,
     exists: true
   });
 }

@@ -70,7 +70,8 @@ class FirestoreService {
                 if (match) {
                     const messages = (match.fields?.messages?.arrayValue?.values || []).map(v => ({ html: v.mapValue?.fields?.html?.stringValue || "", timestamp: parseInt(v.mapValue?.fields?.timestamp?.integerValue || "0") }));
                     const contactName = match.fields?.contactName?.stringValue || null;
-                    return { messages, contactName, exists: true, foundDocId: match.name.split('/').pop() };
+                    const lastModified = parseInt(match.fields?.lastModified?.integerValue || "0", 10);
+                    return { messages, contactName, lastModified, exists: true, foundDocId: match.name.split('/').pop() };
                 }
                 // 2) Fallback: look for a no-slug doc with the same numeric ID (e.g. imported from old format)
                 const noSlugId = 'messenger_web_' + numericId;
@@ -82,16 +83,18 @@ class FirestoreService {
                 if (noSlugMatch) {
                     const messages = (noSlugMatch.fields?.messages?.arrayValue?.values || []).map(v => ({ html: v.mapValue?.fields?.html?.stringValue || "", timestamp: parseInt(v.mapValue?.fields?.timestamp?.integerValue || "0") }));
                     const contactName = noSlugMatch.fields?.contactName?.stringValue || null;
+                    const lastModified = parseInt(noSlugMatch.fields?.lastModified?.integerValue || "0", 10);
                     const foundDocId = noSlugMatch.name.split('/').pop();
                     // Signal that this was found under a legacy no-slug ID so caller can rename it
-                    return { messages, contactName, exists: true, foundDocId, needsRename: true, renameFrom: foundDocId, renameTo: threadId };
+                    return { messages, contactName, lastModified, exists: true, foundDocId, needsRename: true, renameFrom: foundDocId, renameTo: threadId };
                 }
                 // 3) Also check bare numeric (truly old format, no messenger_ prefix)
                 const bareMatch = docs.find(d => d.name.split('/').pop() === numericId);
                 if (bareMatch) {
                     const messages = (bareMatch.fields?.messages?.arrayValue?.values || []).map(v => ({ html: v.mapValue?.fields?.html?.stringValue || "", timestamp: parseInt(v.mapValue?.fields?.timestamp?.integerValue || "0") }));
                     const contactName = bareMatch.fields?.contactName?.stringValue || null;
-                    return { messages, contactName, exists: true, foundDocId: numericId, needsRename: true, renameFrom: numericId, renameTo: threadId };
+                    const lastModified = parseInt(bareMatch.fields?.lastModified?.integerValue || "0", 10);
+                    return { messages, contactName, lastModified, exists: true, foundDocId: numericId, needsRename: true, renameFrom: numericId, renameTo: threadId };
                 }
             }
             return { messages: [], contactName: null, exists: false };
@@ -109,7 +112,8 @@ class FirestoreService {
             const doc = await exactRes.json();
             const messages = (doc.fields?.messages?.arrayValue?.values || []).map(v => ({ html: v.mapValue?.fields?.html?.stringValue || "", timestamp: parseInt(v.mapValue?.fields?.timestamp?.integerValue || "0") }));
             const contactName = doc.fields?.contactName?.stringValue || null;
-            return { messages, contactName, exists: true };
+            const lastModified = parseInt(doc.fields?.lastModified?.integerValue || "0", 10);
+            return { messages, contactName, lastModified, exists: true };
         }
         if (exactRes.status === 404) return { messages: [], contactName: null, exists: false };
         throw new Error("Get failed: " + exactRes.status);

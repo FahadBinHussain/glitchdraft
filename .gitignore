@@ -53,3 +53,5 @@ backend/.next/
 backend/.vercel/
 backend/pnpm-lock.yaml
 extension/glitchdraft_export_1773331874468.json
+.vercel
+.env*

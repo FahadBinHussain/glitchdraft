@@ -106,6 +106,14 @@ button on `edge://extensions` is fallback.
   `pwsh C:\Users\Admin\Downloads\mainframe\vercel-account.ps1 deployments bayazid10@gmail.com --project glitchdraft`
   live: `https://glitchdraft-l72wses5j-qwertys-projects-2eec9040.vercel.app`
   (root and `/api/health` both 200).
+- backend code deploys = vercel CLI from THIS local clone (no gitlab push needed):
+  `pwsh C:\Users\Admin\Downloads\mainframe\vercel-account.ps1 run bayazid10@gmail.com deploy --prod --yes`
+  run from the repo root. one-time link (already done, `.vercel/` is gitignored):
+  `... run bayazid10@gmail.com link --yes --project glitchdraft --scope qwertys-projects-2eec9040`.
+  the active profile must be `bayazid10@gmail.com` (`vercel-account.ps1 use ...`);
+  the run command takes the email explicitly so a wrong active profile does not matter.
+  a deploy rebuilds on vercel, so push/commit the code first and verify with the
+  `deployments` check above until the new deployment reaches READY, then hit the endpoint.
 - neon project `glitchdraft` = `lively-bonus-32409865` (ap-southeast-1) under
   `bayazid190@gmail.com`. current-cycle usage:
   `pwsh C:\Users\Admin\Downloads\mainframe\neon-account.ps1 api bayazid190@gmail.com GET /projects/lively-bonus-32409865/consumption`
@@ -133,7 +141,12 @@ button on `edge://extensions` is fallback.
   sides: the injected copy talks to `glitchdraft_shim.js`, which bridges to the
   module. both position-save paths must keep the `localPositionDirty` flag
   (set on local save, 3s grace after save completes) or the 10s poll snaps the
-  UI back mid-drag.
+  UI back mid-drag. `getDraft` responses must carry `lastModified` (epoch ms,
+  bumped on every PUT): produced by `background.js handleGet` +
+  `neonService.getDraft` + backend `GET /api/drafts/[threadId]` on web, and by
+  `glitchdraft_shim.js handleGetDraft` (neon + firestore paths) on android —
+  both `content.js` forks render the card's `Modified:` line from it, hidden
+  unless it is >1min newer than the message timestamp (added 2026-10-08).
 
 ## known issues
 
