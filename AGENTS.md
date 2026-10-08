@@ -51,6 +51,13 @@ button on `edge://extensions` is fallback.
   pwsh — use `adb shell screencap -p /sdcard/x.png` + `adb pull`. a black frame
   means the screen is off: `adb shell svc power stayon true`,
   `input keyevent KEYCODE_WAKEUP`, `wm dismiss-keyguard`, `cmd statusbar collapse`.
+  gotcha (2026-10-08): `wm dismiss-keyguard` does nothing once the device lock is
+  a SECURE pattern — a `uiautomator dump` then shows `Draw pattern or use
+  fingerprint to unlock` and any `input tap` lands on the lock screen, not the
+  overlay. the earlier wake+dismiss flow only worked while the lock was still
+  swipe/trusted. run `svc power stayon true` at session start so the keyguard
+  never re-engages, and if the pattern screen is up, ask the user to unlock —
+  do not try to clear locksettings.
 
 ## phone / xposed framework (device 21091116UI)
 
@@ -110,10 +117,25 @@ button on `edge://extensions` is fallback.
   `pwsh C:\Users\Admin\Downloads\mainframe\vercel-account.ps1 run bayazid10@gmail.com deploy --prod --yes`
   run from the repo root. one-time link (already done, `.vercel/` is gitignored):
   `... run bayazid10@gmail.com link --yes --project glitchdraft --scope qwertys-projects-2eec9040`.
-  the active profile must be `bayazid10@gmail.com` (`vercel-account.ps1 use ...`);
-  the run command takes the email explicitly so a wrong active profile does not matter.
-  a deploy rebuilds on vercel, so push/commit the code first and verify with the
-  `deployments` check above until the new deployment reaches READY, then hit the endpoint.
+  verify: the command prints `readyState: READY` + `Aliased https://glitchdraft.vercel.app`;
+  then GET `/api/health` with the module config's `x-api-key`.
+- deploy gotchas (2026-10-08 — all three failed a green build until fixed):
+  1. project `rootDirectory=backend` re-roots the build cwd, so `cd backend && ...`
+     in `vercel.json` always dies with `cd: backend: No such file or directory`.
+     commands must assume cwd = backend (`pnpm install`, `pnpm build`, output `.next`).
+  2. Vercel's pnpm 10/11 blocks dependency postinstalls — `pnpm install` exits 1
+     with `ERR_PNPM_IGNORED_BUILDS`. `backend/pnpm-workspace.yaml` carries
+     `allowBuilds: { esbuild: true }` (pnpm 11 removed `onlyBuiltDependencies`,
+     and pnpm 11 ignores a `pnpm` field in package.json; `allowBuilds` works on
+     pnpm >= 10.26, which is what the builder picks). local repro: `CI=1 pnpm install`
+     in `backend/`.
+  3. the CLI uploads the whole tree unless `.vercelignore` excludes it — `android/`
+     alone is 139 MB and the upload aborted with repeated `fetch failed` (an
+     earlier attempt also hit `EBUSY` on the helper's temp global-config = retry
+     once). ignore rules REPLACE .gitignore, so `*.apk` must be listed explicitly.
+- failed-build logs: REST `GET /v3/deployments/<uid>/events?teamId=team_Mei5kaLVoB1zzUAgNmbxDq2R`
+  via `vercel-account.ps1 api bayazid10@gmail.com GET '...'` (the /v13 events path
+  400s, and `vercel inspect` shows no log lines).
 - neon project `glitchdraft` = `lively-bonus-32409865` (ap-southeast-1) under
   `bayazid190@gmail.com`. current-cycle usage:
   `pwsh C:\Users\Admin\Downloads\mainframe\neon-account.ps1 api bayazid190@gmail.com GET /projects/lively-bonus-32409865/consumption`
