@@ -1,0 +1,8 @@
+# deploy only what the backend build needs — android/ alone is 139 MB
+android/
+extension/
+tools/
+userscript/
+.github/
+*.apk
+backend/public/*.apk
