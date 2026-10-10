@@ -11,7 +11,8 @@
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/FahadBinHussain/glitchdraft" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/extension-v1.2.0-2d7ff9" alt="extension version">
+  <a href="https://github.com/FahadBinHussain/glitchdraft/releases/latest"><img src="https://img.shields.io/github/v/release/FahadBinHussain/glitchdraft?label=extension" alt="latest release"></a>
+  <a href="https://github.com/FahadBinHussain/glitchdraft/actions/workflows/release-extension.yml"><img src="https://github.com/FahadBinHussain/glitchdraft/actions/workflows/release-extension.yml/badge.svg" alt="release workflow"></a>
   <img src="https://img.shields.io/badge/platform-web%20%2B%20android-555" alt="platforms">
   <img src="https://img.shields.io/badge/backend-next.js%20%2B%20neon-black" alt="backend">
   <img src="https://img.shields.io/badge/android-kotlin%20%2B%20xposed-7F52FF" alt="android">
@@ -65,9 +66,12 @@ compute.
 
 ### browser extension (edge / chrome)
 
-1. clone the repo
+1. grab the latest `glitchdraft-<version>.zip` from
+   [releases](https://github.com/FahadBinHussain/glitchdraft/releases/latest) —
+   every push publishes one — and unzip it (or clone the repo and use
+   `extension/` directly)
 2. open `edge://extensions` (or `chrome://extensions`), enable developer mode,
-   **load unpacked** → pick the `extension/` folder
+   **load unpacked** → pick the unzipped folder (or `extension/`)
 3. open a chat, click the extension icon or press <kbd>Alt</kbd>+<kbd>M</kbd>
 4. to sync across devices, click the popup and paste your backend config:
 
@@ -177,6 +181,9 @@ stronger image draft handling, and a simpler production setup story.
 - **extension** — edit `extension/*.js` raw, bump `version` in
   `extension/manifest.json` in the same change, then
   `pwsh tools/reload-extension.ps1`
+- every push runs `.github/workflows/release-extension.yml`: it packs the
+  extension into a zip + crx and publishes a github release named after the
+  manifest version, which is what the badge up top reports
 - **android** — `npm run android:run` (debug), `npm run android:build:release`,
   `npm run android:release:apk`
 - **backend** — `pnpm dev` inside `backend/`
