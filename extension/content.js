@@ -612,7 +612,19 @@
     // Function to get the current chat URL/ID
     function getCurrentChatId() {
         const url = window.location.href;
-        
+
+        // Instagram Direct: /direct/t/<thread_id>/ — must run before the
+        // /t/<digits> messenger match below, or instagram thread ids would be
+        // saved as messenger_web_* rows. The thread id is globally unique (it
+        // hashes the participant set), which is what differentiates accounts
+        // and conversations; the slug is only for cross-device name matching.
+        const igMatch = url.match(/instagram\.com\/direct\/t\/([^/?#]+)/);
+        if (igMatch) {
+            const name = getCurrentChatName();
+            const nameSlug = name ? sanitizeNameSlug(name) : null;
+            return nameSlug ? `instagram_web_${igMatch[1]}_${nameSlug}` : `instagram_web_${igMatch[1]}`;
+        }
+
         // Try to match Facebook Messenger chat pattern
         const fbMatch = url.match(/\/t\/(\d+)/);
         if (fbMatch) {
@@ -694,6 +706,20 @@
     // Function to get the display name of the current conversation partner / group
     function getCurrentChatName() {
         const url = window.location.href;
+
+        // ── Instagram Direct ──
+        if (url.includes('instagram.com')) {
+            // 1:1 thread header: the profile link wrapping the heading — inbox
+            // rows link to profiles too but never contain an h2.
+            const headerH2 = document.querySelector('a[aria-label^="Open the profile page of "] h2');
+            // group threads have no profile link — own-profile h2 sits earlier
+            // in the DOM, so the last h2 is the thread heading
+            const h2s = document.querySelectorAll('h2');
+            const el = headerH2 || h2s[h2s.length - 1];
+            const name = el?.textContent?.trim();
+            if (name && name.length > 0 && name.length < 200) return name;
+            return null;
+        }
 
         // ── Messenger (messenger.com / facebook.com) ──
         if (url.includes('messenger.com') || url.match(/facebook\.com.*\/t\//)) {

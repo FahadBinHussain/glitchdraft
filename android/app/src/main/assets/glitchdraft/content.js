@@ -612,6 +612,22 @@
   function getCurrentChatId() {
     const url = window.location.href;
 
+    // Instagram Direct: /direct/t/<thread_id>/ — must run before the
+    // /t/<digits> messenger match below, or instagram thread ids would be
+    // saved as messenger_web_* rows. Slug mirrors extension
+    // sanitizeNameSlug (this fork has no name helpers) so web + in-app
+    // webviews save to the same row.
+    const igMatch = url.match(/instagram\.com\/direct\/t\/([^/?#]+)/);
+    if (igMatch) {
+      const headerH2 = document.querySelector('a[aria-label^="Open the profile page of "] h2');
+      const h2s = document.querySelectorAll('h2');
+      const name = (headerH2 || h2s[h2s.length - 1])?.textContent?.trim();
+      const slug = name
+        ? name.trim().toLowerCase().replace(/[^\p{L}\p{N}]/gu, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').substring(0, 50)
+        : null;
+      return slug ? `instagram_web_${igMatch[1]}_${slug}` : `instagram_web_${igMatch[1]}`;
+    }
+
     // Try to match Facebook Messenger chat pattern
     const fbMatch = url.match(/\/t\/(\d+)/);
     if (fbMatch) {

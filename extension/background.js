@@ -26,7 +26,8 @@ async function getService() {
 chrome.runtime.onInstalled.addListener(() => {
     chrome.tabs.query({
         url: ["https://*.messenger.com/*", "https://*.facebook.com/messages/*",
-              "https://*.discord.com/channels/*", "https://web.whatsapp.com/*"]
+              "https://*.discord.com/channels/*", "https://web.whatsapp.com/*",
+              "https://*.instagram.com/*"]
     }, (tabs) => {
         for (const tab of tabs) {
             if (tab.id !== undefined) chrome.tabs.reload(tab.id).catch(() => {});

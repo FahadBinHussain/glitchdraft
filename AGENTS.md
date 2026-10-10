@@ -181,6 +181,31 @@ button on `edge://extensions` is fallback.
   mirrors content.js `formatTimestamp` via the kotlin helper in
   `OverlayController.formatTimestamp`.
 
+## instagram (web only, added 2026-10-10)
+
+- id = `instagram_web_<threadId>_<nameslug>` from URL `/direct/t/<id>\/` — the
+  instagram branch MUST come before the `/t/(\d+)` messenger match in
+  `getCurrentChatId`, or ig thread ids get saved as `messenger_web_*` rows.
+  thread ids hash the participant set, so different logged-in accounts and
+  conversations never collide — no account scoping needed (same reasoning as
+  the messenger_web fbid). slug from the display name, exact-id read on web.
+- name: thread header heading = `a[aria-label^="Open the profile page of "] h2`
+  — inbox rows link to profiles too but never contain an h2 (that's the
+  discriminator); group threads have no profile link, fallback = last h2
+  (own-profile h2 sits earlier in the DOM). check `#chatIdDisplay.title` on the
+  open panel for the resolved id.
+- "Use" works through the existing generic
+  `[contenteditable="true"][role="textbox"]` fallback (IG composer is a
+  `div.xzsf02u...[contenteditable]`), no instagram-specific insertion needed.
+- both content.js forks carry the id branch; the android copy inlines the slug
+  because that fork has no `sanitizeNameSlug` — keep the two slugs byte-equal.
+  config.js `SUPPORTED_SITES` and background.js `onInstalled` reload patterns
+  must gain instagram.com alongside any manifest site-list change (manifest
+  1.2.0). SPA thread switches are picked up by draftSync's 10s tick + on-open
+  load, no pushstate hook needed (same as messenger).
+- the android NATIVE instagram app is not hooked (com.instagram.android not in
+  TARGET_PACKAGES) — native DM drafts are a separate task; web-only for now.
+
 ## known issues
 
 - fixed: `handleChatChange()` called `loadDraftsFromCloud()`, which existed nowhere —

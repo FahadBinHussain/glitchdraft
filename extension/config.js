@@ -12,6 +12,21 @@ export const SUPPORTED_SITES = [
         checkUrl: (url) => url.includes('facebook.com') && url.includes('/messages/')
     },
     {
+        domain: 'discord.com',
+        urlPattern: '*://*.discord.com/channels/*',
+        checkUrl: (url) => url.includes('discord.com') && url.includes('/channels/')
+    },
+    {
+        domain: 'web.whatsapp.com',
+        urlPattern: '*://web.whatsapp.com/*',
+        checkUrl: (url) => url.includes('web.whatsapp.com')
+    },
+    {
+        domain: 'instagram.com',
+        urlPattern: '*://*.instagram.com/*',
+        checkUrl: (url) => url.includes('instagram.com') && url.includes('/direct/')
+    },
+    {
         domain: 'hostseba.com',
         urlPattern: '*://*.hostseba.com/register.php*',
         checkUrl: (url) => url.includes('hostseba.com') && url.includes('/register.php')
