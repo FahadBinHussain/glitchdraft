@@ -57,6 +57,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
             "com.facebook.katana",
             "com.discord",
             "com.whatsapp",
+            "com.instagram.android",
             "com.android.chrome",
             "com.chrome.beta",
             "com.chrome.dev",
@@ -76,6 +77,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
             "facebook.com/messages",
             "discord.com/channels",
             "web.whatsapp.com",
+            "instagram.com",
             "hostseba.com/register.php"
         )
     }
@@ -228,6 +230,23 @@ class GlitchDraftHook : IXposedHookLoadPackage {
                         id
                     }
                 }
+                pkg.contains("instagram") -> {
+                    // Best-effort: IG usually opens threads inside the inbox
+                    // Activity via fragments (the Fragment.onResume scan is the
+                    // primary path) — this catches deep links + explicit extras.
+                    val fromData = data?.let { uri ->
+                        val segs = uri.pathSegments
+                        val tIdx = segs.indexOf("t")
+                        if (tIdx >= 0 && tIdx + 1 < segs.size) segs[tIdx + 1] else null
+                    }
+                    val fromExtras = listOf(
+                        "thread_id", "thread_key", "threadId", "threadKey", "direct_thread_id"
+                    ).firstNotNullOfOrNull { k ->
+                        intent.extras?.get(k)?.toString()?.takeIf { it.isNotBlank() && it != "null" }
+                    }
+                    XposedBridge.log("$TAG: extractChatId — IG fromData=$fromData fromExtras=$fromExtras")
+                    (fromData ?: fromExtras)?.let { normalizeToFirestoreId(it, "instagram") }
+                }
                 else -> null
             }
             XposedBridge.log("$TAG: extractChatId → result=$result")
@@ -257,7 +276,8 @@ class GlitchDraftHook : IXposedHookLoadPackage {
     private fun hookMessengerThreadNavigation(lpparam: XC_LoadPackage.LoadPackageParam) {
         val pkg = lpparam.packageName
         if (!pkg.contains("facebook") && !pkg.contains("orca") &&
-            !pkg.contains("whatsapp") && !pkg.contains("discord")) return
+            !pkg.contains("whatsapp") && !pkg.contains("discord") &&
+            !pkg.contains("instagram")) return
 
         try {
             val fragmentClass = try {
@@ -348,11 +368,17 @@ class GlitchDraftHook : IXposedHookLoadPackage {
 
                                     // If we got a name, rebuild the chatId to include the name slug
                                     // e.g. "messenger_android_410625006" + "Cat Fren" → "messenger_android_410625006_cat_fren"
-                                    if (chatName != null && chatId.startsWith("messenger_android_")) {
-                                        val numericPart = chatId.removePrefix("messenger_android_")
+                                    //      "instagram_android_1784…" + "ryujin" → "instagram_android_1784…_ryujin"
+                                    val idBase = when {
+                                        chatId.startsWith("instagram_android_") -> "instagram_android_"
+                                        chatId.startsWith("messenger_android_") -> "messenger_android_"
+                                        else -> null
+                                    }
+                                    if (chatName != null && idBase != null) {
+                                        val idPart = chatId.removePrefix(idBase)
                                         val slug = sanitizeNameSlug(chatName)
-                                        if (slug.isNotBlank()) {
-                                            val fullId = "messenger_android_${numericPart}_${slug}"
+                                        if (slug.isNotBlank() && !idPart.endsWith("_$slug")) {
+                                            val fullId = "${idBase}${idPart}_${slug}"
                                             XposedBridge.log("$TAG: Fragment[$fragName] updated chatId=$fullId")
                                             OverlayController.setChatId(fullId)
                                         }
@@ -375,6 +401,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
         val prefix = when {
             pkg.contains("whatsapp") -> "whatsapp"
             pkg.contains("discord") -> "discord"
+            pkg.contains("instagram") -> "instagram"
             else -> "messenger"
         }
 
@@ -433,6 +460,12 @@ class GlitchDraftHook : IXposedHookLoadPackage {
                 // "1234567890@s.whatsapp.net" → "1234567890"
                 raw.substringBefore("@")
             }
+            "instagram" -> {
+                // raw IG thread id — same numeric id the web extension puts in
+                // instagram_web_<id>_<slug>, so slug-pick bridges the two
+                val slug = name?.let { sanitizeNameSlug(it) }?.takeIf { it.isNotBlank() }
+                if (slug != null) "instagram_android_${raw}_${slug}" else "instagram_android_$raw"
+            }
             else -> "${prefix}_$raw"
         }
     }
@@ -453,6 +486,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
         val prefix = when {
             pkg.contains("whatsapp") -> "whatsapp"
             pkg.contains("discord") -> "discord"
+            pkg.contains("instagram") -> "instagram"
             else -> "messenger"
         }
         return try {
@@ -736,7 +770,8 @@ class GlitchDraftHook : IXposedHookLoadPackage {
      *  3. Walk TextViews in the top 25% of screen — name is always in the header bar
      */
     private fun extractChatNameFromActivity(activity: Activity, pkg: String): String? {
-        if (!pkg.contains("facebook") && !pkg.contains("orca")) return null
+        if (!pkg.contains("facebook") && !pkg.contains("orca") &&
+            !pkg.contains("instagram")) return null
         return try {
             // Strategy 1: ActionBar / window title
             val winTitle = activity.title?.toString()?.trim()
@@ -810,7 +845,8 @@ class GlitchDraftHook : IXposedHookLoadPackage {
      * content descriptions and accessibility nodes (works with Litho).
      */
     private fun dumpAndExtractNameFromActivity(activity: Activity, pkg: String): String? {
-        if (!pkg.contains("facebook") && !pkg.contains("orca")) return null
+        if (!pkg.contains("facebook") && !pkg.contains("orca") &&
+            !pkg.contains("instagram")) return null
         return try {
             val decorView = activity.window?.decorView ?: run {
                 XposedBridge.log("$TAG: dumpAndExtract — no decorView")

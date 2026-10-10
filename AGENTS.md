@@ -181,7 +181,7 @@ button on `edge://extensions` is fallback.
   mirrors content.js `formatTimestamp` via the kotlin helper in
   `OverlayController.formatTimestamp`.
 
-## instagram (web only, added 2026-10-10)
+## instagram (added 2026-10-10)
 
 - id = `instagram_web_<threadId>_<nameslug>` from URL `/direct/t/<id>\/` — the
   instagram branch MUST come before the `/t/(\d+)` messenger match in
@@ -203,8 +203,21 @@ button on `edge://extensions` is fallback.
   must gain instagram.com alongside any manifest site-list change (manifest
   1.2.0). SPA thread switches are picked up by draftSync's 10s tick + on-open
   load, no pushstate hook needed (same as messenger).
-- the android NATIVE instagram app is not hooked (com.instagram.android not in
-  TARGET_PACKAGES) — native DM drafts are a separate task; web-only for now.
+- android native instagram: `GlitchDraftHook` plumbing is in (package in
+  TARGET_PACKAGES, fragment-scan gate, `instagram` prefix →
+  `instagram_android_<threadid>[_slug]`, name gates + panel reload regex
+  widened) but DEVICE-UNVERIFIED — the phone was disconnected when it landed.
+  before declaring support: confirm on-device that IG exposes the thread id
+  (recon = `su -c 'grep -a -h GlitchDraft /data/adb/lspd/log/*.log | tail'`
+  after force-stop + relaunch — extractChatId/Fragment arg dumps print every
+  intent extra and fragment arg), AND widen the slug-pick anchor
+  `^messenger_(web|android)_\d+_(.+)$` in ALL of DraftRepository.pickBestRow,
+  neonService.findDocByNameSlug, the firestoreService slug sort and
+  shim.neonPickBySlug to `^(messenger|instagram)_(web|android)_\d+_(.+)$`
+  (change one, change all) — ig thread ids are numeric, same value on web and
+  android, so slug-pick bridges the rows. deliberately NO extractChatId(url)
+  instagram branch: native DMs never load instagram.com urls and webviews use
+  the injected content.js id — a bare url-derived id would shadow the real row.
 
 ## known issues
 

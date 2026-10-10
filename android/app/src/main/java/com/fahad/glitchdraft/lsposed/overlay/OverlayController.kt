@@ -1307,7 +1307,7 @@ object OverlayController {
         Handler(Looper.getMainLooper()).post {
             chatIdLabel?.text = chatIdDebugText()
             // If the panel is open and the new ID contains a name slug (final ID), reload drafts
-            if (isPanelVisible && id.matches(Regex("^messenger_(web|android)_\\d+_.+"))) {
+            if (isPanelVisible && id.matches(Regex("^(messenger|instagram)_(web|android)_\\d+_.+"))) {
                 loadDrafts()
             }
         }
