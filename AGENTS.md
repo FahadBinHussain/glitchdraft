@@ -17,6 +17,9 @@ button on `edge://extensions` is fallback.
   messenger/facebook/discord/whatsapp tabs so fresh code re-injects (manifest
   1.1.7). after any extension reload, confirm the messaging tabs refreshed —
   if the symptom persists on a freshly loaded tab, it's a real sync bug.
+  the manifest version also renders as a static shields.io badge in the README
+  hero (`extension-v1.2.0`) — bump that line together with the manifest or the
+  public version claim goes stale.
 
 ## android / lsposed module
 
