@@ -112,15 +112,14 @@ button on `edge://extensions` is fallback.
 
 ## deploy / quota locations
 
-- vercel prod project `glitchdraft` sits under the `bayazid10@gmail.com` profile and
-  is wired to **gitlab** `fahadbinhussain/glitchdraft`, not github — pushing
-  `FahadBinHussain/glitchdraft` does not deploy it. check:
+- vercel prod project `glitchdraft` sits under the `bayazid10@gmail.com` profile (`prj_nJRpupJDYFif4BOlHydLBmz4pTk5` on `team_Mei5kaLVoB1zzUAgNmbxDq2R` / `qwertys-projects-2eec9040`).
+- auto-deploy from github: wired via `.github/workflows/deploy-backend.yml` using GitHub repo secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`. Pushing to `main` triggers a production deployment via Vercel CLI (`npx vercel deploy --prod --yes`). Note: Vercel project cannot be directly linked via `POST /v9/projects/.../link` because `bayazid10@gmail.com` does not hold the GitHub login connection (`dailybnp1978@gmail.com` holds it per Rule 22); the GitHub Actions workflow bypasses this constraint seamlessly.
+  check deployments:
   `pwsh C:\Users\Admin\Downloads\mainframe\vercel-account.ps1 deployments bayazid10@gmail.com --project glitchdraft`
-  live: `https://glitchdraft-l72wses5j-qwertys-projects-2eec9040.vercel.app`
-  (root and `/api/health` both 200).
-- backend code deploys = vercel CLI from THIS local clone (no gitlab push needed):
+  live: `https://glitchdraft.vercel.app` (and `/api/health` both 200).
+- local manual CLI deploy fallback (from repo root):
   `pwsh C:\Users\Admin\Downloads\mainframe\vercel-account.ps1 run bayazid10@gmail.com deploy --prod --yes`
-  run from the repo root. one-time link (already done, `.vercel/` is gitignored):
+  one-time link (already done, `.vercel/` is gitignored):
   `... run bayazid10@gmail.com link --yes --project glitchdraft --scope qwertys-projects-2eec9040`.
   verify: the command prints `readyState: READY` + `Aliased https://glitchdraft.vercel.app`;
   then GET `/api/health` with the module config's `x-api-key`.
