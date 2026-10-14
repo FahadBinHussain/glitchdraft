@@ -206,21 +206,58 @@ button on `edge://extensions` is fallback.
   must gain instagram.com alongside any manifest site-list change (manifest
   1.2.0). SPA thread switches are picked up by draftSync's 10s tick + on-open
   load, no pushstate hook needed (same as messenger).
-- android native instagram: `GlitchDraftHook` plumbing is in (package in
-  TARGET_PACKAGES, fragment-scan gate, `instagram` prefix →
-  `instagram_android_<threadid>[_slug]`, name gates + panel reload regex
-  widened) but DEVICE-UNVERIFIED — the phone was disconnected when it landed.
-  before declaring support: confirm on-device that IG exposes the thread id
-  (recon = `su -c 'grep -a -h GlitchDraft /data/adb/lspd/log/*.log | tail'`
-  after force-stop + relaunch — extractChatId/Fragment arg dumps print every
-  intent extra and fragment arg), AND widen the slug-pick anchor
-  `^messenger_(web|android)_\d+_(.+)$` in ALL of DraftRepository.pickBestRow,
-  neonService.findDocByNameSlug, the firestoreService slug sort and
-  shim.neonPickBySlug to `^(messenger|instagram)_(web|android)_\d+_(.+)$`
-  (change one, change all) — ig thread ids are numeric, same value on web and
-  android, so slug-pick bridges the rows. deliberately NO extractChatId(url)
+- android native instagram — VERIFIED on device 2026-10-11 (ryujin thread):
+  thread key = `ThreadTargetParcelable.A00` (obfuscated class `05v2`), a
+  128-bit decimal like `340282366841710301244259786932994007727`, extracted by
+  `findIgThreadKeyNumeric` (first `^\d{15,}$` field of the parceled object's
+  declared fields). it is NOT the web `/direct/t/<id>` number (17-digit, e.g.
+  17846415453040180) — the numeric spaces are disjoint, so cross-device
+  matching rides the name slug exactly like messenger. id validation goes
+  through `isPlausibleIdValue` / BANNED_ID_VALUES (instagram needs `^\d{6,}$`)
+  so `DISPLAY_LOCATION=unavailable` can never become
+  `instagram_android_unavailable` again. name (android): Strategy 0 in
+  `extractNameFromFragmentView` — a header-zone view whose resource-id
+  contains `title` but not `subtitle` (`com.instagram.android:id/header_title`
+  → `ryujin`); "blend" is in NOISE_WORDS because an action-button content-desc
+  ("Blend") at y=80 used to beat the fallback. thread UI lives in
+  `ModalActivity`; navigation recipe = animations off (gotcha below) → tap
+  `direct_tab` (540,2272) → inbox row. deliberately NO extractChatId(url)
   instagram branch: native DMs never load instagram.com urls and webviews use
   the injected content.js id — a bare url-derived id would shadow the real row.
+- instagram can NEVER get a WM overlay window: `SYSTEM_ALERT_WINDOW` is not in
+  its manifest — `appops set com.instagram.android SYSTEM_ALERT_WINDOW allow`
+  silently no-ops from shell AND root (stays `default`, `--uid` too),
+  `pm grant` SecurityExceptions, and MIUI SecurityCenter's per-app "Open new
+  windows while running in the background" = Always allow does not move the
+  appop either: addView still throws `BadTokenException ... permission denied
+  for window type 2038` (reached via am start
+  `com.miui.securitycenter/com.miui.permcenter.permissions.PermissionsEditorActivity`
+  `--es extra_pkgname <pkg>` → Other permissions). so `OverlayController` has
+  a second attach method, in-window (decor) mode: when `canDrawOverlays()` is
+  false, `attachView`/`detachView`/`moveView` route the panel/toggle as
+  children of the activity's own decor instead of WM windows (positions stay
+  in toggleParams/panelParams x/y, mirrored to translationX/Y). second-method
+  rules: the panel header visibly shows `in-window mode — no overlay window
+  permission` and the attach log names the mode — never pretend the WM overlay
+  is active. `setWindowTouchable` is a no-op in this mode (visibility pairs
+  already done by hide/show/togglePanel); the FLAG_NOT_TOUCHABLE invariants of
+  the WM path are untouched. the hook now calls `attach()` on EVERY resume (a
+  `wantsRemount` predicate only guards the log/icon line) because decor views
+  are pinned to one activity — "decor host changed, re-attaching" migrates
+  them between activities (MainActivity ↔ ModalActivity). verified live:
+  icon at (112,893) screen px (in-window renders ~81px above the old WM mAttrs
+  position — same saved numbers, draggable), panel + badge + slug-pick to the
+  web row + save merge (msgs 1→2, restored via PUT) + Use insert into the ig
+  composer (cleared with a DEL loop, never sent) all work.
+- ig gotchas: `uiautomator dump` only works with animations off —
+  `settings put global window/transition/animator_duration_scale 0`; the
+  panel's Save button sits BEHIND the IME while the keyboard is open, so
+  `input tap` on it hits the keyboard — `keyevent KEYCODE_BACK` closes just
+  the keyboard, then re-read bounds before tapping; remote quoting: a
+  `$( ... )` inside an adb shell string is expanded by pwsh on the PC first
+  (`seq: not recognized`) and `grep -e 'two words'` loses its quotes through
+  both shell layers — build loops in pwsh or pass multi-keycode
+  `input keyevent 67 67 ...`, and filter greps with local Select-String.
 
 ## known issues
 
@@ -243,8 +280,13 @@ button on `edge://extensions` is fallback.
   (3) newest `lastModified`. implemented identically in
   `DraftRepository.pickBestRow` (kotlin), `neonService.findDocByNameSlug`,
   the `firestoreService` slug sort, and `glitchdraft_shim.neonPickBySlug` —
-  change one, change all. anchor is `^messenger_(web|android)_\d+_<slug>$`
-  (plain `endsWith` over-matches: slug `messenger` would hit `_1_messenger`).
+  change one, change all. anchor is
+  `^(messenger|instagram)_(web|android)_\d+_<slug>$` (plain `endsWith`
+  over-matches: slug `messenger` would hit `_1_messenger`). the web-over-android
+  preference is `id.contains("_web_")` on both sides (counts instagram rows
+  too), and firestoreService's legacy bare/no-slug fallbacks are deliberately
+  gated to `threadId.startsWith("messenger_")` — instagram never had those
+  formats and a bare-numeric hit could rename a real messenger row away.
   `slugify` must stay a mirror of `content.js sanitizeNameSlug`.
 - never PUT `contactName: null` — the backend `/api/drafts/[threadId]` PUT
   replaces wholesale, and a wiped contactName silently breaks name matching
@@ -252,7 +294,8 @@ button on `edge://extensions` is fallback.
   the stored one (`DraftRepository.saveDraft`, shim `handleSaveDraft`).
 - slug picks are read-only: no `needsRename` on slug hits (only legacy bare/no-slug
   numeric ids rename) — a read must never move/delete another chat's row.
-- verify on device: open the chat, tap the icon (112,973 real screen px), then
+- verify on device: open the chat, tap the icon (112,973 real screen px in WM
+  mode, (112,893) in-window), then
   `su -c 'grep -a -h DraftRepo /data/adb/lspd/log/*.log | tail'` — the log line
   prints `slug '...' pick=... name='...' (req=...)`; panel header shows the row id.
 - gotchas: `adb install -r` can drop the `SYSTEM_ALERT_WINDOW` appop — overlay logs

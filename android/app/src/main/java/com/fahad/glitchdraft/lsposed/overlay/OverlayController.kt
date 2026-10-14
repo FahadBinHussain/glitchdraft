@@ -86,6 +86,13 @@ object OverlayController {
 
     private var isPanelVisible = false
     private var isAttached = false
+    // In-window (decor) attach: used when the app can never hold
+    // SYSTEM_ALERT_WINDOW (instagram doesn't declare it in its manifest, and
+    // neither MIUI's popup toggle nor root appops can grant it — the window
+    // manager rejects TYPE_APPLICATION_OVERLAY with BadTokenException 2038).
+    // The panel header must label this second method visibly.
+    private var inWindowMode = false
+    private var decorHost: WeakReference<Activity>? = null
 
     /** Weak reference to the last WebView that loaded a target URL.
      *  Used by the Use button to call window.GlitchDraftUseMessage(html)
@@ -143,18 +150,30 @@ object OverlayController {
 
     fun isAttached() = isAttached
 
+    /** in-window overlay is pinned to one activity's decor — true when this
+     *  resume is a different activity, so the hook must let attach() migrate. */
+    fun wantsRemount(activity: Activity) =
+        isAttached && inWindowMode && decorHost?.get() !== activity
+
     /**
      * Attach overlay to the given Activity.  Safe to call on every onResume —
      * will no-op if already attached.
      */
     fun attach(activity: Activity, packageName: String) {
-        if (isAttached) return
+        if (isAttached) {
+            // in-window mode hangs off ONE activity's decor — migrate on resume
+            if (inWindowMode && decorHost?.get() !== activity) {
+                XposedBridge.log("$TAG: decor host changed, re-attaching in-window overlay")
+                detach()
+            } else return
+        }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            !Settings.canDrawOverlays(activity)
-        ) {
-            XposedBridge.log("$TAG: overlay permission not granted — skipping attach")
-            return
+        val canWmOverlay = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            Settings.canDrawOverlays(activity)
+        inWindowMode = !canWmOverlay
+        decorHost = if (inWindowMode) WeakReference(activity) else null
+        if (inWindowMode) {
+            XposedBridge.log("$TAG: no overlay window permission for $packageName — using in-window (decor) attach; panel header labels the mode")
         }
 
         try {
@@ -172,10 +191,26 @@ object OverlayController {
                 val panX = savedPositions?.optJSONObject("android_panel")?.optInt("x", -1) ?: -1
                 val panY = savedPositions?.optJSONObject("android_panel")?.optInt("y", -1) ?: -1
                 Handler(Looper.getMainLooper()).post {
-                    buildPanel(activity, if (panX >= 0) panX else -1, if (panY >= 0) panY else -1)
-                    buildToggle(activity, if (togX >= 0) togX else -1, if (togY >= 0) togY else -1)
-                    isAttached = true
-                    XposedBridge.log("$TAG: Overlay attached for $packageName (togPos=$togX,$togY panPos=$panX,$panY)")
+                    try {
+                        buildPanel(activity, if (panX >= 0) panX else -1, if (panY >= 0) panY else -1)
+                        buildToggle(activity, if (togX >= 0) togX else -1, if (togY >= 0) togY else -1)
+                        isAttached = true
+                        XposedBridge.log("$TAG: Overlay attached for $packageName (togPos=$togX,$togY panPos=$panX,$panY)")
+                    } catch (e: Throwable) {
+                        // attach rejected: fail loudly and clean up the half-built
+                        // views so the next onResume retries
+                        XposedBridge.log("$TAG: overlay attach REJECTED for $packageName: $e")
+                        detachView(panelView)
+                        detachView(toggleView)
+                        panelView = null
+                        toggleView = null
+                        draftList = null
+                        draftInput = null
+                        chatIdLabel = null
+                        decorHost = null
+                        inWindowMode = false
+                        isAttached = false
+                    }
                 }
             }
         } catch (e: Throwable) {
@@ -187,8 +222,10 @@ object OverlayController {
         stopPanelSync()
         scope.cancel()
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-        runCatching { windowManager?.removeView(toggleView) }
-        runCatching { windowManager?.removeView(panelView) }
+        detachView(toggleView)
+        detachView(panelView)
+        inWindowMode = false
+        decorHost = null
         windowManager = null
         toggleView = null
         panelView = null
@@ -196,6 +233,43 @@ object OverlayController {
         draftInput = null
         chatIdLabel = null
         isAttached = false
+    }
+
+    // -------------------------------------------------------------------------
+    // View hosting: WM overlay (primary, needs SYSTEM_ALERT_WINDOW) vs
+    // in-window decor child (second method, used when the app can never hold
+    // the permission). Positions always live in toggleParams/panelParams x/y —
+    // in-window mirrors them to translationX/Y.
+    // -------------------------------------------------------------------------
+
+    private fun attachView(view: View, params: WindowManager.LayoutParams) {
+        if (inWindowMode) {
+            val decor = decorHost?.get()?.window?.decorView as? ViewGroup
+                ?: throw IllegalStateException("in-window attach: decor host gone")
+            decor.addView(view, FrameLayout.LayoutParams(params.width, params.height))
+            view.translationX = params.x.toFloat()
+            view.translationY = params.y.toFloat()
+        } else {
+            windowManager?.addView(view, params)
+        }
+    }
+
+    private fun detachView(view: View?) {
+        if (view == null) return
+        if (inWindowMode) {
+            runCatching { (decorHost?.get()?.window?.decorView as? ViewGroup)?.removeView(view) }
+        } else {
+            runCatching { windowManager?.removeView(view) }
+        }
+    }
+
+    private fun moveView(view: View, params: WindowManager.LayoutParams) {
+        if (inWindowMode) {
+            view.translationX = params.x.toFloat()
+            view.translationY = params.y.toFloat()
+        } else {
+            windowManager?.updateViewLayout(view, params)
+        }
     }
 
     /** Hide the toggle button (and panel) when the target app loses focus. */
@@ -292,7 +366,7 @@ object OverlayController {
                         if (Math.abs(dx) > 10 || Math.abs(dy) > 10) hasMoved = true
                         params.x = (togInitX + dx).coerceAtLeast(0)
                         params.y = (togInitY + dy).coerceAtLeast(0)
-                        windowManager?.updateViewLayout(frame, params)
+                        moveView(frame, params)
                     }
                     MotionEvent.ACTION_UP -> {
                         if (!hasMoved) togglePanel()
@@ -303,7 +377,7 @@ object OverlayController {
             }
         })
 
-        windowManager?.addView(frame, params)
+        attachView(frame, params)
         toggleView = frame
     }
 
@@ -365,6 +439,19 @@ object OverlayController {
         header.addView(chatIdLabel, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
         ))
+
+        // second attach method in use — label it visibly, never pretend the
+        // WM overlay is active
+        if (inWindowMode) {
+            header.addView(TextView(ctx).apply {
+                text = "in-window mode — no overlay window permission"
+                setTextColor(0xAAFFFFFF.toInt())
+                textSize = 9f
+                setPadding(0, 1, 0, 0)
+            }, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
         root.addView(header, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT
@@ -435,7 +522,7 @@ object OverlayController {
         panelParams = params
 
         root.visibility = View.GONE
-        windowManager?.addView(root, params)
+        attachView(root, params)
         panelView = root
 
         // --- Listeners ---
@@ -451,7 +538,7 @@ object OverlayController {
                     MotionEvent.ACTION_MOVE -> {
                         params.x = (panInitX + (ev.rawX - panTouchX).toInt()).coerceAtLeast(0)
                         params.y = (panInitY + (ev.rawY - panTouchY).toInt()).coerceAtLeast(0)
-                        windowManager?.updateViewLayout(root, params)
+                        moveView(root, params)
                     }
                     MotionEvent.ACTION_UP -> {
                         scheduleSavePositions()  // save after panel drag ends
@@ -482,7 +569,9 @@ object OverlayController {
     }
 
     private fun setWindowTouchable(view: View?, params: WindowManager.LayoutParams?, touchable: Boolean) {
-        if (view == null || params == null || windowManager == null) return
+        // in-window children have no WM flags — visibility (set by the same
+        // callers) already gates their touchability
+        if (view == null || params == null || inWindowMode || windowManager == null) return
         val masked = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         val hasFlag = masked != 0
         if (hasFlag == !touchable) return

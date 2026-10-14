@@ -60,11 +60,11 @@ class NeonService {
         if (data.exists) {
             return { messages: data.messages || [], contactName: data.contactName || null, lastModified: Number(data.lastModified) || 0, exists: true };
         }
-        if (this.isMessengerThreadId(threadId)) {
+        if (this.isCrossPlatformThreadId(threadId)) {
             // Cross-platform name match: web/android numeric spaces never overlap,
             // so the only shared key is the display-name slug. Rank candidates by
             // contactName > web row > newest lastModified (mirrors Android's picker).
-            const slugMatch = threadId.match(/^messenger_(?:web|android)_\d+_(.+)$/);
+            const slugMatch = threadId.match(/^(?:messenger|instagram)_(?:web|android)_\d+_(.+)$/);
             if (slugMatch) {
                 const picked = await this.findDocByNameSlug(slugMatch[1], threadId);
                 if (picked) {
@@ -103,7 +103,7 @@ class NeonService {
         };
     }
 
-    // Rank rows whose id ends with this chat's name slug:
+    // Rank rows whose id ends with this chat's name slug (messenger + instagram):
     //   1. contactName slug == requested slug (same person on both platforms)
     //   2. web row (web reads its exact id; the other platform must follow it)
     //   3. newest lastModified
@@ -111,7 +111,7 @@ class NeonService {
     async findDocByNameSlug(nameSlug, excludeId = null) {
         const allDrafts = await this.getAllDrafts();
         const esc = String(nameSlug).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const anchor = new RegExp("^messenger_(web|android)_\\d+_" + esc + "$");
+        const anchor = new RegExp("^(messenger|instagram)_(web|android)_\\d+_" + esc + "$");
         const slugify = (s) => String(s || "").trim().toLowerCase()
             .replace(/[^\p{L}\p{N}]/gu, "_")
             .replace(/_+/g, "_")
@@ -123,8 +123,8 @@ class NeonService {
             const aName = slugify(allDrafts[a]?.contactName) === nameSlug ? 1 : 0;
             const bName = slugify(allDrafts[b]?.contactName) === nameSlug ? 1 : 0;
             if (bName !== aName) return bName - aName;
-            const aWeb = a.startsWith("messenger_web_") ? 1 : 0;
-            const bWeb = b.startsWith("messenger_web_") ? 1 : 0;
+            const aWeb = a.includes("_web_") ? 1 : 0;
+            const bWeb = b.includes("_web_") ? 1 : 0;
             if (bWeb !== aWeb) return bWeb - aWeb;
             return (allDrafts[b]?.lastModified || 0) - (allDrafts[a]?.lastModified || 0);
         });
@@ -174,8 +174,8 @@ class NeonService {
         }
     }
 
-    isMessengerThreadId(threadId) {
-        return /^messenger_(?:web|android)_\d+(?:_.+)?$/.test(threadId || "");
+    isCrossPlatformThreadId(threadId) {
+        return /^(?:messenger|instagram)_(?:web|android)_\d+(?:_.+)?$/.test(threadId || "");
     }
 
     getMessengerNumericId(threadId) {

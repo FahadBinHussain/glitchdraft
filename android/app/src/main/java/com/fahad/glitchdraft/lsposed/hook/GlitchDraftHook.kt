@@ -122,11 +122,15 @@ class GlitchDraftHook : IXposedHookLoadPackage {
 
                         Handler(Looper.getMainLooper()).post {
                             try {
-                                if (!OverlayController.isAttached()) {
+                                // WM mode attaches once; in-window mode is pinned
+                                // to one activity's decor and migrates on switch
+                                if (!OverlayController.isAttached() ||
+                                    OverlayController.wantsRemount(activity)
+                                ) {
                                     XposedBridge.log("$TAG: Attaching overlay for $activityName in ${lpparam.packageName}")
                                     if (iconBitmap != null) OverlayController.setIcon(iconBitmap)
-                                    OverlayController.attach(activity, lpparam.packageName)
                                 }
+                                OverlayController.attach(activity, lpparam.packageName)
                                 // Show the overlay toggle (was hidden on pause)
                                 OverlayController.show()
                                 // Try to extract a chat ID from the Activity's intent
@@ -368,7 +372,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
 
                                     // If we got a name, rebuild the chatId to include the name slug
                                     // e.g. "messenger_android_410625006" + "Cat Fren" → "messenger_android_410625006_cat_fren"
-                                    //      "instagram_android_1784…" + "ryujin" → "instagram_android_1784…_ryujin"
+                                    //      "instagram_android_3402823668…" + "ryujin" → "instagram_android_3402823668…_ryujin"
                                     val idBase = when {
                                         chatId.startsWith("instagram_android_") -> "instagram_android_"
                                         chatId.startsWith("messenger_android_") -> "messenger_android_"
@@ -405,6 +409,22 @@ class GlitchDraftHook : IXposedHookLoadPackage {
             else -> "messenger"
         }
 
+        // instagram: the thread id is not a plain string arg — it rides inside
+        // ThreadTargetParcelable (A00, a 128-bit decimal thread key, verified
+        // per-thread on device 2026-10-11). That is a different numeric space
+        // than the web /direct/t/<id> form, so cross-device matching rides the
+        // name slug — same as messenger web↔android.
+        if (prefix == "instagram") {
+            args.keySet()?.forEach { key ->
+                if (!key.contains("THREAD_TARGET", ignoreCase = true)) return@forEach
+                val id = args.get(key)?.let { findIgThreadKeyNumeric(it) }
+                if (id != null) {
+                    XposedBridge.log("$TAG: Fragment[$fragName] THREAD_TARGET id=$id")
+                    return normalizeToFirestoreId(id, prefix)
+                }
+            }
+        }
+
         // Key patterns to try
         val patterns = listOf(
             "thread_id", "thread_key", "threadId", "threadKey",
@@ -415,7 +435,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
         )
         for (key in patterns) {
             val v = args.get(key)
-            if (v != null && v.toString().isNotBlank()) {
+            if (v != null && isPlausibleIdValue(v.toString(), prefix)) {
                 XposedBridge.log("$TAG: Fragment[$fragName] found key=$key value=$v")
                 return normalizeToFirestoreId(v.toString(), prefix)
             }
@@ -427,11 +447,44 @@ class GlitchDraftHook : IXposedHookLoadPackage {
                 lower.contains("conversation") || lower.contains("jid") ||
                 lower.contains("channel")) {
                 val v = args.get(key)
-                if (v != null && v.toString().isNotBlank()) {
+                if (v != null && isPlausibleIdValue(v.toString(), prefix)) {
                     XposedBridge.log("$TAG: Fragment[$fragName] heuristic key=$key value=$v")
                     return normalizeToFirestoreId(v.toString(), prefix)
                 }
             }
+        }
+        return null
+    }
+
+    private val BANNED_ID_VALUES = setOf(
+        "unavailable", "null", "true", "false", "none", "nil", "undefined", "n/a", "0", "-1"
+    )
+
+    /** Rejects prose/flag values the key heuristics can match by accident
+     *  (seen live: DirectThreadFragment...DISPLAY_LOCATION=unavailable became
+     *  the chat id). Instagram thread ids are pure numeric — the same value the
+     *  web extension reads from /direct/t/<id>/. */
+    private fun isPlausibleIdValue(raw: String, prefix: String): Boolean {
+        val v = raw.trim()
+        if (v.isBlank() || v.length > 128 || v.any { it.isWhitespace() }) return false
+        if (v.lowercase() in BANNED_ID_VALUES) return false
+        if (prefix == "instagram") return v.matches(Regex("^\\d{6,}$"))
+        return true
+    }
+
+    /** First long numeric field of the ThreadTargetParcelable (or a nested
+     *  field) — the thread key. Numeric-only so prose values can't match. */
+    private fun findIgThreadKeyNumeric(target: Any): String? {
+        var cls: Class<*>? = target.javaClass
+        while (cls != null && cls != Any::class.java) {
+            for (f in cls.declaredFields) {
+                if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                f.isAccessible = true
+                val v = try { f.get(target) } catch (_: Throwable) { null } ?: continue
+                val s = v.toString()
+                if (s.matches(Regex("^\\d{15,}$"))) return s
+            }
+            cls = cls.superclass
         }
         return null
     }
@@ -461,8 +514,11 @@ class GlitchDraftHook : IXposedHookLoadPackage {
                 raw.substringBefore("@")
             }
             "instagram" -> {
-                // raw IG thread id — same numeric id the web extension puts in
-                // instagram_web_<id>_<slug>, so slug-pick bridges the two
+                // raw = ThreadTargetParcelable.A00, the native thread key (a
+                // 128-bit decimal like 340282366841710301244259786932994007727)
+                // — NOT the web /direct/t/<id> number (verified on device
+                // 2026-10-11, ryujin). The numeric spaces differ, so slug-pick
+                // bridges instagram_web_* ↔ instagram_android_* like messenger.
                 val slug = name?.let { sanitizeNameSlug(it) }?.takeIf { it.isNotBlank() }
                 if (slug != null) "instagram_android_${raw}_${slug}" else "instagram_android_$raw"
             }
@@ -940,6 +996,24 @@ class GlitchDraftHook : IXposedHookLoadPackage {
             v.getLocationOnScreen(loc)
             if (loc[1] > headerZone) continue  // only look in header area
 
+            // Strategy 0: a view whose resource-id entry name contains "title"
+            // but not "subtitle" — instagram's header is app:id/header_title
+            // ("ryujin"); content-desc fallbacks there pick the header's
+            // "Blend" action button instead (seen live).
+            val entryName = try {
+                if (v.id != View.NO_ID) v.resources?.getResourceEntryName(v.id) else null
+            } catch (_: Throwable) { null }
+            if (entryName != null &&
+                entryName.contains("title", ignoreCase = true) &&
+                !entryName.contains("subtitle", ignoreCase = true)
+            ) {
+                val t = (v as? android.widget.TextView)?.text?.toString()?.trim()
+                if (t != null && isValidName(t)) {
+                    XposedBridge.log("$TAG: chatName from titleView '$t' (id=$entryName)")
+                    return t
+                }
+            }
+
             // Strategy 1: contentDescription — look for "Name, Thread details" pattern
             val cd = v.contentDescription?.toString()?.trim()
             if (cd != null) {
@@ -1009,7 +1083,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
         "calls", "stories", "add story", "new message", "active",
         "active now", "send", "ok", "cancel", "done", "settings",
         "no messages in this conversation.", "type a message…", "type a message...",
-        "react", "reply", "more", "home"
+        "react", "reply", "more", "home", "blend"
     )
 
     private fun isValidName(text: String): Boolean {

@@ -32,12 +32,13 @@ class FirestoreService {
         const baseUrl = "https://firestore.googleapis.com/v1/projects/" + config.projectId + "/databases/(default)/documents/drafts";
         const key = "?key=" + config.apiKey;
 
-        // ── For messenger threads: match by name slug across platforms ──
+        // ── For messenger/instagram threads: match by name slug across platforms ──
         // Web:     "messenger_web_7990669924323622_cat_fren"
         // Android: "messenger_android_410625006_cat_fren"
-        // → extract the name slug (everything after the 3rd underscore segment),
-        //   list all docs, find any messenger_* doc with the same name slug.
-        const messengerMatch = threadId.match(/^messenger_(?:web|android)_(\d+)_(.+)$/);
+        // IG:      "instagram_web_17846415453040180_ryujin" (android = native thread key)
+        // → extract the name slug (everything after the numeric segment),
+        //   list all docs, find any doc with the same name slug.
+        const messengerMatch = threadId.match(/^(?:messenger|instagram)_(?:web|android)_(\d+)_(.+)$/);
         if (messengerMatch) {
             const numericId = messengerMatch[1];
             const nameSlug = messengerMatch[2];
@@ -49,7 +50,7 @@ class FirestoreService {
                 //    name slug, ranked: contactName slug match > web row > newest
                 //    lastModified (same ranking as Android's DraftRepository).
                 const esc = nameSlug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-                const anchor = new RegExp("^messenger_(web|android)_\\d+_" + esc + "$");
+                const anchor = new RegExp("^(messenger|instagram)_(web|android)_\\d+_" + esc + "$");
                 const slugify = (s) => String(s || "").trim().toLowerCase()
                     .replace(/[^\p{L}\p{N}]/gu, "_").replace(/_+/g, "_")
                     .replace(/^_|_$/g, "").substring(0, 50);
@@ -60,8 +61,8 @@ class FirestoreService {
                         const aName = slugify(a.fields?.contactName?.stringValue) === nameSlug ? 1 : 0;
                         const bName = slugify(b.fields?.contactName?.stringValue) === nameSlug ? 1 : 0;
                         if (bName !== aName) return bName - aName;
-                        const aWeb = aId.startsWith("messenger_web_") ? 1 : 0;
-                        const bWeb = bId.startsWith("messenger_web_") ? 1 : 0;
+                        const aWeb = aId.includes("_web_") ? 1 : 0;
+                        const bWeb = bId.includes("_web_") ? 1 : 0;
                         if (bWeb !== aWeb) return bWeb - aWeb;
                         const aLm = parseInt(a.fields?.lastModified?.integerValue || "0");
                         const bLm = parseInt(b.fields?.lastModified?.integerValue || "0");
@@ -73,13 +74,15 @@ class FirestoreService {
                     const lastModified = parseInt(match.fields?.lastModified?.integerValue || "0", 10);
                     return { messages, contactName, lastModified, exists: true, foundDocId: match.name.split('/').pop() };
                 }
-                // 2) Fallback: look for a no-slug doc with the same numeric ID (e.g. imported from old format)
+                // 2) Fallback: look for a no-slug doc with the same numeric ID (e.g. imported
+                // from old format). Messenger-only: instagram shipped with slugs from day
+                // one, and a bare/no-slug hit on an ig numeric could rename a real row.
                 const noSlugId = 'messenger_web_' + numericId;
                 const noSlugIdAndroid = 'messenger_android_' + numericId;
-                const noSlugMatch = docs.find(d => {
+                const noSlugMatch = threadId.startsWith("messenger_") ? docs.find(d => {
                     const docId = d.name.split('/').pop();
                     return docId === noSlugId || docId === noSlugIdAndroid;
-                });
+                }) : null;
                 if (noSlugMatch) {
                     const messages = (noSlugMatch.fields?.messages?.arrayValue?.values || []).map(v => ({ html: v.mapValue?.fields?.html?.stringValue || "", timestamp: parseInt(v.mapValue?.fields?.timestamp?.integerValue || "0") }));
                     const contactName = noSlugMatch.fields?.contactName?.stringValue || null;
@@ -89,7 +92,7 @@ class FirestoreService {
                     return { messages, contactName, lastModified, exists: true, foundDocId, needsRename: true, renameFrom: foundDocId, renameTo: threadId };
                 }
                 // 3) Also check bare numeric (truly old format, no messenger_ prefix)
-                const bareMatch = docs.find(d => d.name.split('/').pop() === numericId);
+                const bareMatch = threadId.startsWith("messenger_") ? docs.find(d => d.name.split('/').pop() === numericId) : null;
                 if (bareMatch) {
                     const messages = (bareMatch.fields?.messages?.arrayValue?.values || []).map(v => ({ html: v.mapValue?.fields?.html?.stringValue || "", timestamp: parseInt(v.mapValue?.fields?.timestamp?.integerValue || "0") }));
                     const contactName = bareMatch.fields?.contactName?.stringValue || null;

@@ -682,7 +682,7 @@
 
         cleaned = cleaned
             .replace(/^conversation\s+with\s+/i, '')
-            .replace(/\s*\(\s*messenger_(?:web|android)_\d+(?:_[^)]+)?\s*\)\s*$/i, '')
+            .replace(/\s*\(\s*(?:messenger|instagram)_(?:web|android)_\d+(?:_[^)]+)?\s*\)\s*$/i, '')
             .replace(/\s*[-–|]\s*(?:Messenger|Facebook)\s*$/i, '')
             .trim();
 
@@ -693,9 +693,9 @@
     }
 
     function getDisplayNameFromChatId(chatId) {
-        const messengerMatch = chatId?.match(/^messenger_(?:web|android)_\d+_(.+)$/);
-        if (messengerMatch) {
-            return messengerMatch[1]
+        const crossMatch = chatId?.match(/^(?:messenger|instagram)_(?:web|android)_\d+_(.+)$/);
+        if (crossMatch) {
+            return crossMatch[1]
                 .replace(/_/g, ' ')
                 .replace(/\s+/g, ' ')
                 .trim() || null;

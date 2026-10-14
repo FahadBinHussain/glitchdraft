@@ -144,7 +144,7 @@
         const list = await neonRequest('/api/drafts', 'GET');
         const drafts = list?.drafts || {};
         const esc = String(nameSlug).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const anchor = new RegExp('^messenger_(web|android)_\\d+_' + esc + '$');
+        const anchor = new RegExp('^(messenger|instagram)_(web|android)_\\d+_' + esc + '$');
         const slugify = (s) => String(s || '').trim().toLowerCase()
             .replace(/[^\p{L}\p{N}]/gu, '_').replace(/_+/g, '_')
             .replace(/^_|_$/g, '').substring(0, 50);
@@ -154,8 +154,8 @@
             const aName = slugify(drafts[a]?.contactName) === nameSlug ? 1 : 0;
             const bName = slugify(drafts[b]?.contactName) === nameSlug ? 1 : 0;
             if (bName !== aName) return bName - aName;
-            const aWeb = a.startsWith('messenger_web_') ? 1 : 0;
-            const bWeb = b.startsWith('messenger_web_') ? 1 : 0;
+            const aWeb = a.includes('_web_') ? 1 : 0;
+            const bWeb = b.includes('_web_') ? 1 : 0;
             if (bWeb !== aWeb) return bWeb - aWeb;
             return (drafts[b]?.lastModified || 0) - (drafts[a]?.lastModified || 0);
         });
@@ -163,7 +163,7 @@
     }
 
     async function neonResolveThreadId(chatId) {
-        const slugMatch = String(chatId).match(/^messenger_(?:web|android)_\d+_(.+)$/);
+        const slugMatch = String(chatId).match(/^(?:messenger|instagram)_(?:web|android)_\d+_(.+)$/);
         if (slugMatch) {
             const picked = await neonPickBySlug(slugMatch[1]);
             if (picked) return picked;
