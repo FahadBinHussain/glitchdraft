@@ -2080,6 +2080,16 @@
         }
 
         chrome.runtime.sendMessage({ action: 'getDraft', chatId: chatId }, (response) => {
+            // Load-race guard: bail if the chat changed while this GET was in
+            // flight. A stale response would render another chat's messages here
+            // and, worse, the lazy back-fill below would write another chat's
+            // name + a slug-picked row's messages under this id — that is what
+            // mass-created the duplicate messenger_web_<fbid>_<other-slug> rows
+            // (clone storm of 2026-10-06..15).
+            if (getCurrentChatId() !== chatId) {
+                console.log('GlitchDraft: chat changed during load - dropping stale response for ' + chatId);
+                return;
+            }
             if (!response || !response.success) {
                 const msg = response?.message || 'Error loading messages';
                 const escaped = String(msg).replace(/</g, "&lt;").replace(/>/g, "&gt;");

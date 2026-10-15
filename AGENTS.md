@@ -336,3 +336,14 @@ button on `edge://extensions` is fallback.
   all PUTs 500'd, deletes ran; rebuilt bodies from plain hashtables and
   restored from backup). verification rule: every original `(ts|html)` must be
   findable in the final canonical row, and final row count = backup − deleted.
+- load-race guard (2026-10-15): `loadSavedMessages`' getDraft callback re-derives
+  `getCurrentChatId()` first and bails when it no longer matches the id captured
+  at request time. before this, a chat switch during the GET round-trip let the
+  lazy back-fill PUT a slug-picked row's messages + the NEW chat's name under the
+  OLD chat's id — that mass-created the duplicate
+  `messenger_web_<fbid>_<foreign-slug>` rows (64-row clone storm, second hygiene
+  pass 2026-10-15). one guard covers render + `lazyRenameIfNeeded` + back-fill.
+  the android assets fork has no load-time write path (no name back-fill at all),
+  so it needs no guard — only the extension's load path can create rows; keep it
+  that way: a load must never PUT unless the chat id is re-verified stable at
+  response time.
