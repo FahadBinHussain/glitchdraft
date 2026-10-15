@@ -323,19 +323,35 @@ button on `edge://extensions` is fallback.
   content change — same visible-only rule as web `draftSync.js` for neon quota.
   verify like the tick test: open panel, PUT a marker draft via the backend,
   `uiautomator dump` within ~13s for the marker, PUT the original back, dump again.
-- backend row hygiene (2026-10-05): one canonical row per thread. duplicate slug
-  rows (rename leftovers: Peak ×6, Fatima ×6, Fahmida ×3, …) merged — union of
-  messages with exact `timestamp|html` dedupe, newest-`lastModified` row is
-  canonical, `contactName` = the candidate whose slug matches the canonical id;
-  16 stale/empty rows deleted; id slugs renamed to match `contactName` so
-  `pickBestRow` criterion 1 holds everywhere. backup (personal drafts — never
-  commit): `C:\tmp\glitchdraft-drafts-backup-20261005.json`. order matters: PUT
-  the canonical BEFORE deleting sources — a failed PUT with succeeded deletes
-  leaves a gap only the backup can fill (hit exactly that: pwsh
-  `ConvertTo-Json` on the wrapped plan threw "Argument types do not match",
-  all PUTs 500'd, deletes ran; rebuilt bodies from plain hashtables and
-  restored from backup). verification rule: every original `(ts|html)` must be
-  findable in the final canonical row, and final row count = backup − deleted.
+- backend row hygiene (2026-10-05, second pass 2026-10-15): one canonical row
+  per thread. the first pass merged rename leftovers (Peak ×6, Fatima ×6,
+  Fahmida ×3, …): union of messages with exact `timestamp|html` dedupe,
+  newest-`lastModified` row canonical, `contactName` = the candidate whose slug
+  matches the canonical id; 16 stale/empty rows deleted; id slugs renamed to
+  match `contactName` so `pickBestRow` criterion 1 holds everywhere. the load
+  race then re-created the duplicates (62 rows by 2026-10-15: Cat Fren ×14,
+  Jarif ×5, … with foreign messages + crossed names), fixed by the guard below;
+  the second pass deleted 43 clone/pollution rows + fixed 4 crossed names
+  (Jarif/Rima/Fardin back to their names, ig ryujin — the ig name had been
+  clobbered to the own-profile name, breaking criterion 1), leaving 19 canonical
+  rows. message homes were assigned from the oct-5 backup: every backup key had
+  exactly one backup group, the 5 post-backup keys in >1 group went to their
+  only backup-group member (or, for the edited pair, the row carrying the
+  same-ts successor). verified: 0 keys from the pre-cleanup snapshot lost; the
+  only 2 oct-5 keys absent are documented user actions — the 05-24 13:58
+  Segoe draft edited in place (same ts, html now `50:40 e dek…`) and a discord
+  link draft the user deleted on 10-14. name-only PUTs kept every
+  `lastModified` frozen (no `Modified:` stamps). backups (personal drafts —
+  never commit): `C:\tmp\glitchdraft-drafts-backup-20261005.json` and
+  `C:\tmp\glitchdraft-drafts-backup-20261015.json`; repair script
+  `C:\tmp\gd-repair-20261015.ps1` (dry-run default, `-Apply` writes, PUTs
+  canonicals before deletes). order matters: PUT the canonical BEFORE deleting
+  sources — a failed PUT with succeeded deletes leaves a gap only the backup can
+  fill (hit exactly that on 10-05: pwsh `ConvertTo-Json` on the wrapped plan
+  threw "Argument types do not match", all PUTs 500'd, deletes ran; rebuilt
+  bodies from plain hashtables and restored from backup). verification rule:
+  every original `(ts|html)` must be findable in the final canonical row (minus
+  documented user edits/deletes), and final row count = backup − deleted.
 - load-race guard (2026-10-15): `loadSavedMessages`' getDraft callback re-derives
   `getCurrentChatId()` first and bails when it no longer matches the id captured
   at request time. before this, a chat switch during the GET round-trip let the
