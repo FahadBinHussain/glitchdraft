@@ -136,6 +136,12 @@ button on `edge://extensions` is fallback.
      alone is 139 MB and the upload aborted with repeated `fetch failed` (an
      earlier attempt also hit `EBUSY` on the helper's temp global-config = retry
      once). ignore rules REPLACE .gitignore, so `*.apk` must be listed explicitly.
+  4. an EMPTY `vercel-account.ps1 run ... deploy` output means the CLI never ran:
+     scoop's pnpm bin held a bare extensionless posix shim (`...\bin\vercel`)
+     that PATH resolves before the real `%USERPROFILE%\.pnpm-global\bin\vercel.ps1`
+     and hangs forever — rename it `.bak`, assert `vercel --version` prints, and
+     confirm a new deployment exists (helper `deployments` subcommand) before
+     believing a deploy happened (details in mainframe AGENTS, 2026-10-15).
 - failed-build logs: REST `GET /v3/deployments/<uid>/events?teamId=team_Mei5kaLVoB1zzUAgNmbxDq2R`
   via `vercel-account.ps1 api bayazid10@gmail.com GET '...'` (the /v13 events path
   400s, and `vercel inspect` shows no log lines).
