@@ -167,11 +167,16 @@ button on `edge://extensions` is fallback.
   module. both position-save paths must keep the `localPositionDirty` flag
   (set on local save, 3s grace after save completes) or the 10s poll snaps the
   UI back mid-drag. `getDraft` responses must carry `lastModified` (epoch ms,
-  bumped on every PUT): produced by `background.js handleGet` +
+  bumped on content-changing PUTs): produced by `background.js handleGet` +
   `neonService.getDraft` + backend `GET /api/drafts/[threadId]` on web, and by
   `glitchdraft_shim.js handleGetDraft` (neon + firestore paths) on android —
   both `content.js` forks render the card's `Modified:` line from it, hidden
   unless it is >1min newer than the message timestamp (added 2026-10-08).
+  `lastModified` bumps ONLY when `messages` actually change (backend PUT
+  compares against the stored row, 2026-10-15): name-only writes — the
+  contactName lazy back-fill and legacy id renames — used to stamp
+  `Modified: today` on untouched drafts (seen as a June draft showing
+  "Modified: Today, at 11:56 AM" after nothing but a panel open).
 - the android panel's cards are NOT drawn by the injected content.js: the
   WebView fork only renders cards inside in-app webviews (whatsapp web etc).
   On native messenger the panel is built by

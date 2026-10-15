@@ -57,20 +57,29 @@ export async function PUT(
   const contactName = body.contactName ?? null;
   const now = Date.now();
 
+  // lastModified drives the cards' "Modified:" line, so only real content
+  // changes may bump it. Name-only writes (the contactName lazy back-fill
+  // on load, legacy id renames) happen with zero message changes and used
+  // to stamp "Modified: today" on untouched drafts.
+  const existing = await db.select().from(drafts).where(eq(drafts.threadId, threadId)).limit(1);
+  const prev = existing[0];
+  const contentChanged = !prev || JSON.stringify(prev.messages ?? []) !== JSON.stringify(messages);
+  const lastModified = contentChanged ? now : Number(prev.lastModified) || now;
+
   await db
     .insert(drafts)
     .values({
       threadId,
       messages,
       contactName,
-      lastModified: now
+      lastModified
     })
     .onConflictDoUpdate({
       target: drafts.threadId,
       set: {
         messages,
         contactName,
-        lastModified: now,
+        lastModified,
         updatedAt: new Date()
       }
     });
