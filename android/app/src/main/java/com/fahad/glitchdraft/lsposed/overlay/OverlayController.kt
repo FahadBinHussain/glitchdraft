@@ -6,13 +6,16 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.PixelFormat
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
+import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -36,9 +39,12 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.fahad.glitchdraft.lsposed.data.DraftRepository
+import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.lang.reflect.Method
 import java.lang.ref.WeakReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +72,10 @@ object OverlayController {
     private const val TAG = "GlitchDraft-Overlay"
     // mirrors extension draftSync.js: 10s tick, only while the panel is visible
     private const val SYNC_TICK_MS = 10_000L
+    // panel 📎: request code for the system image picker (must be unique within
+    // the host activity) + longest side picked images are kept at.
+    private const val REQ_PICK_IMAGE = 0x4744  // "GD"
+    private const val MAX_IMAGE_DIM = 1024
 
     // Accent colour that matches the extension
     private const val ACCENT  = 0xFF0084FF.toInt()
@@ -102,6 +112,16 @@ object OverlayController {
     fun setWebView(wv: WebView) {
         currentWebView = WeakReference(wv)
     }
+
+    // ----- panel 📎 staged images -------------------------------------------
+    // Picked images wait here until the next save; they ride into the draft as
+    // <img src="data:image/jpeg;base64,…"> tags — the exact shape the web panel
+    // stores for a pasted image, so render + Use handle both identically.
+    private data class StagedImage(val html: String, val bitmap: Bitmap)
+    private val stagedImages = mutableListOf<StagedImage>()
+    private var stagedRow: LinearLayout? = null
+    private var awaitingImagePick = false
+    private val pickResultHookedMembers = mutableSetOf<String>()
 
     private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var repo: DraftRepository? = null
@@ -232,6 +252,8 @@ object OverlayController {
         draftList = null
         draftInput = null
         chatIdLabel = null
+        stagedRow = null
+        awaitingImagePick = false
         isAttached = false
     }
 
@@ -471,6 +493,17 @@ object OverlayController {
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
         ))
 
+        // --- Staged image chips (only visible while an image is attached) ---
+        stagedRow = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(ctx, 8), dp(ctx, 6), dp(ctx, 8), 0)
+            visibility = View.GONE
+        }
+        root.addView(stagedRow, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
         // --- Input row ---
         val inputRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -494,6 +527,14 @@ object OverlayController {
             background = etBg
         }
         inputRow.addView(draftInput!!, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        val attachBtn = TextView(ctx).apply {
+            text = "📎"
+            textSize = 20f
+            gravity = Gravity.CENTER
+            setPadding(dp(ctx, 6), 0, dp(ctx, 2), 0)
+        }
+        inputRow.addView(attachBtn)
 
         val saveBtn = TextView(ctx).apply {
             text = "💾"
@@ -549,6 +590,9 @@ object OverlayController {
         })
 
         saveBtn.setOnClickListener { saveDraft(ctx) }
+        attachBtn.setOnClickListener { launchImagePicker(ctx) }
+        // re-attach / decor migration rebuilds the panel — restore chips
+        renderStagedRow()
     }
 
     // -------------------------------------------------------------------------
@@ -670,6 +714,10 @@ object OverlayController {
     ) {
         val ctx = container.context
         val plainText = htmlToPlainText(draft.html)
+        // images survive an inline edit — saveEdit re-appends these exact tags
+        // after the edited text (previously they were dropped silently)
+        val keptImgTags = Regex("<img[^>]*>", RegexOption.IGNORE_CASE)
+            .findAll(draft.html).map { it.value }.toList()
 
         // ── Card wrapping all content for this draft ──────────────────────────
         val card = LinearLayout(ctx).apply {
@@ -881,8 +929,14 @@ object OverlayController {
         // SAVE EDIT: write updated html back to Firestore
         saveEditBtn.setOnClickListener {
             val newText = editInput.text.toString().trim()
-            if (newText.isEmpty()) return@setOnClickListener
-            val newHtml = newText.replace("\n", "<br>")
+            if (newText.isEmpty() && keptImgTags.isEmpty()) return@setOnClickListener
+            val newHtml = buildString {
+                append(newText.replace("\n", "<br>"))
+                keptImgTags.forEach {
+                    if (isNotEmpty()) append("<br>")
+                    append(it)
+                }
+            }
             scope.launch {
                 try {
                     r.editDraftByTimestamp(chatId, draft.timestamp, newHtml)
@@ -1345,7 +1399,8 @@ object OverlayController {
     private fun saveDraft(ctx: Context) {
         val input = draftInput ?: return
         val text = input.text.toString().trim()
-        if (text.isEmpty()) return
+        val staged = stagedImages.toList()
+        if (text.isEmpty() && staged.isEmpty()) return
 
         val r = repo ?: run {
             Toast.makeText(ctx, "Firebase not configured", Toast.LENGTH_SHORT).show()
@@ -1354,19 +1409,243 @@ object OverlayController {
 
         val chatId = currentChatId() ?: currentPackage
 
+        // text + each staged image on its own line. <img src="data:…"> is the
+        // exact shape the web panel saves for pasted images, so render + Use on
+        // both sides handle it identically. newlines become <br> like the edit
+        // path — raw \n inside html renders as a plain space.
+        val html = buildString {
+            append(text.replace("\n", "<br>"))
+            staged.forEach {
+                if (isNotEmpty()) append("<br>")
+                append(it.html)
+            }
+        }
+
         scope.launch {
             try {
                 val existing = r.getDraft(chatId).toMutableList()
-                existing.add(DraftRepository.Draft(html = text, timestamp = System.currentTimeMillis()))
+                existing.add(DraftRepository.Draft(html = html, timestamp = System.currentTimeMillis()))
                 r.saveDraft(chatId, existing, _currentChatName)
                 Handler(Looper.getMainLooper()).post {
                     input.text.clear()
+                    stagedImages.removeAll(staged.toSet())
+                    renderStagedRow()
                     loadDrafts()
                 }
             } catch (e: Throwable) {
                 Handler(Looper.getMainLooper()).post {
                     Toast.makeText(ctx, "Save failed: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Image attach (panel 📎) — capture side of the web panel's paste-an-image
+    // -------------------------------------------------------------------------
+
+    /** 📎 handler: open the system image picker. The result comes back through a
+     *  lazily installed onActivityResult hook (see installImagePickResultHook) —
+     *  the overlay has no Activity of its own to override. */
+    private fun launchImagePicker(ctx: Context) {
+        val act = panelView?.context as? Activity
+        if (act == null) {
+            Toast.makeText(ctx, "Attach failed: no active screen for the picker", Toast.LENGTH_LONG).show()
+            return
+        }
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        try {
+            installImagePickResultHook(act)
+            awaitingImagePick = true
+            act.startActivityForResult(intent, REQ_PICK_IMAGE)
+        } catch (t: Throwable) {
+            awaitingImagePick = false
+            XposedBridge.log("$TAG: image picker launch failed: $t")
+            Toast.makeText(ctx, "Image picker failed: ${t.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Hooks every declared activity-result entry point in [activity]'s class
+     *  chain — platforms route results differently (onActivityResult vs
+     *  dispatchActivityResult) and apps override at different levels; each fire
+     *  is logged while a pick is awaited, and the first match is handed to
+     *  [handleImagePickResult]. */
+    private fun installImagePickResultHook(activity: Activity) {
+        try {
+            val intType = Int::class.javaPrimitiveType
+                ?: throw IllegalStateException("int primitive class missing")
+            val intentType = Intent::class.java
+            val strType = String::class.java
+
+            val chain = ArrayList<Class<*>>()
+            var cls: Class<*>? = activity.javaClass
+            while (cls != null && cls != Activity::class.java) {
+                chain.add(cls)
+                cls = cls.superclass
+            }
+            chain.add(Activity::class.java)
+            XposedBridge.log("$TAG: pick hook walk from ${activity.javaClass.name} @${System.identityHashCode(activity)} (${chain.size} classes)")
+
+            val sigs: List<Pair<String, Array<Class<*>>>> = listOf(
+                "onActivityResult" to arrayOf(intType, intType, intentType),
+                "dispatchActivityResult" to arrayOf(intType, intType, intentType),
+                "dispatchActivityResult" to arrayOf(strType, intType, intType, intentType)
+            )
+
+            var hooked = 0
+            for (c in chain) {
+                for ((name, types) in sigs) {
+                    val m = try {
+                        c.getDeclaredMethod(name, *types)
+                    } catch (_: NoSuchMethodException) {
+                        null
+                    } ?: continue
+                    val key = "${c.name}#${m.name}#${m.parameterTypes.size}"
+                    val isNew = synchronized(pickResultHookedMembers) { pickResultHookedMembers.add(key) }
+                    if (!isNew) continue
+                    XposedBridge.hookMethod(m, object : XC_MethodHook() {
+                        override fun afterHookedMethod(param: XC_MethodHook.MethodHookParam) {
+                            val threeArg = m.parameterTypes.size == 3
+                            val rc = (if (threeArg) param.args[0] else param.args[1]) as? Int
+                            val result = (if (threeArg) param.args[1] else param.args[2]) as? Int
+                            val data = (if (threeArg) param.args[2] else param.args[3]) as? Intent
+                            if (rc != null && (rc == REQ_PICK_IMAGE || awaitingImagePick)) {
+                                XposedBridge.log("$TAG: activity-result path fired ${c.simpleName}.${m.name}/${m.parameterTypes.size} rc=$rc result=$result awaiting=$awaitingImagePick data=${data != null} uri=${data?.data} on@${System.identityHashCode(param.thisObject)}")
+                            }
+                            if (rc != null && result != null) {
+                                handleImagePickResult(rc, result, data)
+                            }
+                        }
+                    })
+                    hooked++
+                    XposedBridge.log("$TAG: pick hook → ${c.name}.${m.name}(${m.parameterTypes.size} args)")
+                }
+            }
+            XposedBridge.log("$TAG: pick hooks installed: $hooked")
+        } catch (t: Throwable) {
+            XposedBridge.log("$TAG: multi-hook install failed: $t")
+        }
+    }
+
+    /** Called from the hooked onActivityResult; one-shot via awaitingImagePick. */
+    private fun handleImagePickResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode != REQ_PICK_IMAGE || !awaitingImagePick) return
+        awaitingImagePick = false
+        XposedBridge.log("$TAG: image pick result result=$resultCode uri=${data?.data}")
+        if (resultCode != Activity.RESULT_OK) return
+        val uri: Uri = data?.data ?: return
+        val appCtx = panelView?.context?.applicationContext ?: return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val staged = buildStagedImage(appCtx, uri)
+                    ?: throw IllegalStateException("could not decode the picked image")
+                Handler(Looper.getMainLooper()).post {
+                    stagedImages.add(staged)
+                    renderStagedRow()
+                    Toast.makeText(appCtx, "Image attached — it saves with the draft", Toast.LENGTH_SHORT).show()
+                }
+            } catch (t: Throwable) {
+                XposedBridge.log("$TAG: image attach failed: $t")
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(appCtx, "Image attach failed: ${t.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    /** Decode → downscale (longest side ≤ [MAX_IMAGE_DIM]) → JPEG q80 → base64
+     *  data-url <img> tag. EXIF rotation is applied because the re-encode drops it. */
+    private fun buildStagedImage(ctx: Context, uri: Uri): StagedImage? {
+        val cr = ctx.contentResolver
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sample = 1
+        val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
+        while (maxSide / (sample * 2) >= MAX_IMAGE_DIM) sample *= 2
+
+        val decoded = cr.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
+        } ?: return null
+
+        var out: Bitmap = if (decoded.width > MAX_IMAGE_DIM || decoded.height > MAX_IMAGE_DIM) {
+            val ratio = minOf(
+                MAX_IMAGE_DIM.toFloat() / decoded.width,
+                MAX_IMAGE_DIM.toFloat() / decoded.height
+            )
+            Bitmap.createScaledBitmap(
+                decoded, (decoded.width * ratio).toInt(), (decoded.height * ratio).toInt(), true
+            )
+        } else {
+            decoded
+        }
+
+        try {
+            val orientation = cr.openInputStream(uri)?.use {
+                ExifInterface(it).getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+            } ?: ExifInterface.ORIENTATION_NORMAL
+            val matrix = Matrix()
+            when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+                ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            }
+            if (!matrix.isIdentity) {
+                out = Bitmap.createBitmap(out, 0, 0, out.width, out.height, matrix, true)
+            }
+        } catch (t: Throwable) {
+            // rotation is best-effort metadata; the image itself is intact
+            XposedBridge.log("$TAG: exif orientation read failed (rotation skipped): $t")
+        }
+
+        val baos = ByteArrayOutputStream()
+        out.compress(Bitmap.CompressFormat.JPEG, 80, baos)
+        val b64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        return StagedImage("<img src=\"data:image/jpeg;base64,$b64\">", out)
+    }
+
+    /** Rebuilds the chip row above the input: thumbnail + ✕ per staged image. */
+    private fun renderStagedRow() {
+        Handler(Looper.getMainLooper()).post {
+            val row = stagedRow ?: return@post
+            val ctx = row.context
+            row.removeAllViews()
+            row.visibility = if (stagedImages.isEmpty()) View.GONE else View.VISIBLE
+            stagedImages.forEachIndexed { idx, img ->
+                val chip = FrameLayout(ctx)
+                val thumb = ImageView(ctx).apply {
+                    setImageBitmap(img.bitmap)
+                    scaleType = ImageView.ScaleType.CENTER_CROP
+                }
+                chip.addView(thumb, FrameLayout.LayoutParams(dp(ctx, 56), dp(ctx, 56)))
+                val remove = TextView(ctx).apply {
+                    text = "✕"
+                    textSize = 11f
+                    setTextColor(WHITE)
+                    setBackgroundColor(0x99000000.toInt())
+                    setPadding(dp(ctx, 4), dp(ctx, 1), dp(ctx, 4), dp(ctx, 1))
+                }
+                remove.setOnClickListener {
+                    if (idx in stagedImages.indices) {
+                        stagedImages.removeAt(idx)
+                        renderStagedRow()
+                        Toast.makeText(ctx, "Image removed", Toast.LENGTH_SHORT).show()
+                    }
+                }
+                chip.addView(remove, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                ).apply { gravity = Gravity.TOP or Gravity.END })
+                val cl = LinearLayout.LayoutParams(dp(ctx, 56), dp(ctx, 56))
+                cl.rightMargin = dp(ctx, 6)
+                row.addView(chip, cl)
             }
         }
     }

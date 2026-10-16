@@ -270,6 +270,42 @@ button on `edge://extensions` is fallback.
   both shell layers — build loops in pwsh or pass multi-keycode
   `input keyevent 67 67 ...`, and filter greps with local Select-String.
 
+## android image attach (added 2026-10-16)
+
+- panel 📎 opens `ACTION_GET_CONTENT image/*` from the panel's activity
+  (`panelView?.context as? Activity`, `startActivityForResult`); the result is
+  downscaled (bounds decode → inSampleSize → scale ≤1024 → EXIF rotate) and
+  re-encoded as JPEG q80 base64 into the SAME row html a web paste produces:
+  `<img src="data:image/jpeg;base64,…">` — one shape for both platforms, no
+  android-specific html. save merges `text<br><img …>`; the edit path re-appends
+  the row's `keptImgTags` so editing text never drops the image; the staged chip
+  row (thumbnail + ✕, above the input) clears on chat change and after save;
+  image-only drafts save fine. versionName 1.2.0.
+- activity-result delivery gotcha: hooking ONLY the app's most-derived override
+  (`DelegatingFbFragmentFrameworkActivity.onActivityResult`) logs the install but
+  never fires — pick and cancel both came back with zero callbacks. the fix is
+  hooking EVERY `onActivityResult(int,int,Intent)` declared in the activity
+  class chain (MainActivity walk: DelegatingFbFragmentFrameworkActivity →
+  FbFragmentActivity → FragmentActivity → ComponentActivity →
+  android.app.Activity). all 5 fire once per result, in super-unwind order, and
+  the `android.app.Activity` hook is the first to see the payload
+  (`activity-result path fired Activity.onActivityResult/3 … result=-1
+  uri=content://media/picker_get_content/…`); an `awaitingImagePick` flag keeps
+  the handler single-shot. keep the multi-hook walk — don't "simplify" it back
+  to one hook.
+- verify on device: 📎 → picker tile (179,1397) → Done (898,2192); lspd log
+  shows `activity-result path fired …` then `image pick result result=-1`;
+  backend row html contains `data:image/jpeg;base64`. test-row cleanup: if the
+  pre-test GET said `exists:false`, DELETE the row after — exact restore is
+  `exists:false` again (a GET on a missing row answers 200 with
+  `messages:[] contactName:null lastModified:0 exists:false`, so check `exists`).
+- testing gotchas: uiautomator xpath `//android.widget.ImageView` matches
+  NOTHING — nodes are `<node class="…">`, so query
+  `//*[@class='android.widget.ImageView']` or filter by attribute (burned
+  twice). `input text 'img%stest'` (space via `%s`) typed `imgt est` — avoid
+  `%s` spaces, verify the field with a dump, fix with `KEYCODE_MOVE_END` + a
+  `keyevent 67 67 …` burst before retyping.
+
 ## known issues
 
 - fixed: `handleChatChange()` called `loadDraftsFromCloud()`, which existed nowhere —
