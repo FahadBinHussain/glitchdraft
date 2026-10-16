@@ -27,6 +27,11 @@ export const SUPPORTED_SITES = [
         checkUrl: (url) => url.includes('instagram.com') && url.includes('/direct/')
     },
     {
+        domain: 'web.telegram.org',
+        urlPattern: '*://web.telegram.org/*',
+        checkUrl: (url) => url.includes('web.telegram.org')
+    },
+    {
         domain: 'hostseba.com',
         urlPattern: '*://*.hostseba.com/register.php*',
         checkUrl: (url) => url.includes('hostseba.com') && url.includes('/register.php')

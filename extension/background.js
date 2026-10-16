@@ -27,7 +27,7 @@ chrome.runtime.onInstalled.addListener(() => {
     chrome.tabs.query({
         url: ["https://*.messenger.com/*", "https://*.facebook.com/messages/*",
               "https://*.discord.com/channels/*", "https://web.whatsapp.com/*",
-              "https://*.instagram.com/*"]
+              "https://*.instagram.com/*", "https://web.telegram.org/*"]
     }, (tabs) => {
         for (const tab of tabs) {
             if (tab.id !== undefined) chrome.tabs.reload(tab.id).catch(() => {});

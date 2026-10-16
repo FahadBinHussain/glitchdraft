@@ -58,6 +58,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
             "com.discord",
             "com.whatsapp",
             "com.instagram.android",
+            "org.telegram.messenger",
             "com.android.chrome",
             "com.chrome.beta",
             "com.chrome.dev",
@@ -78,6 +79,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
             "discord.com/channels",
             "web.whatsapp.com",
             "instagram.com",
+            "web.telegram.org",
             "hostseba.com/register.php"
         )
     }
@@ -95,6 +97,9 @@ class GlitchDraftHook : IXposedHookLoadPackage {
         hookWebViewLoadUrl(lpparam)
         hookActivityForOverlay(lpparam)
         hookMessengerThreadNavigation(lpparam)
+        if (lpparam.packageName.startsWith("org.telegram")) {
+            hookTelegramChatNavigation(lpparam)
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -400,6 +405,81 @@ class GlitchDraftHook : IXposedHookLoadPackage {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Telegram: org.telegram.ui.ChatActivity is NOT an android Fragment — it
+    // extends Telegram's own BaseFragment and lives inside LaunchActivity, so
+    // the framework Fragment.onResume scan above never sees it. hook the chat
+    // fragment's own onResume and read the id/title from MessagesController
+    // (stable public API: getChat(id).title / getUser(id).first_name).
+    // -------------------------------------------------------------------------
+
+    private fun hookTelegramChatNavigation(lpparam: XC_LoadPackage.LoadPackageParam) {
+        try {
+            val chatActivityClass = XposedHelpers.findClass(
+                "org.telegram.ui.ChatActivity", lpparam.classLoader
+            )
+            val messagesControllerClass = XposedHelpers.findClass(
+                "org.telegram.messenger.MessagesController", lpparam.classLoader
+            )
+
+            XposedHelpers.findAndHookMethod(
+                chatActivityClass,
+                "onResume",
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val frag = param.thisObject ?: return
+                        // small delay so the header + MessagesController state settle
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            try {
+                                val chatIdInt = runCatching {
+                                    XposedHelpers.getIntField(frag, "chatId")
+                                }.getOrNull()
+                                val altId = runCatching {
+                                    XposedHelpers.getLongField(frag, "dialogId")
+                                }.getOrNull() ?: runCatching {
+                                    XposedHelpers.getLongField(frag, "did")
+                                }.getOrNull()
+                                XposedBridge.log("$TAG: TG ChatActivity resume chatId=$chatIdInt dialogId=$altId")
+                                if (chatIdInt == null || chatIdInt == 0) return@postDelayed
+
+                                val account = runCatching {
+                                    XposedHelpers.callMethod(frag, "getCurrentAccount") as Int
+                                }.getOrDefault(0)
+                                val mc = XposedHelpers.callStaticMethod(
+                                    messagesControllerClass, "getInstance", account
+                                )
+                                val chatObj = runCatching {
+                                    XposedHelpers.callMethod(mc, "getChat", chatIdInt)
+                                }.getOrNull()
+                                val userObj = if (chatObj == null) runCatching {
+                                    XposedHelpers.callMethod(mc, "getUser", chatIdInt)
+                                }.getOrNull() else null
+                                val title = runCatching {
+                                    XposedHelpers.getObjectField(chatObj, "title") as? String
+                                }.getOrNull() ?: runCatching {
+                                    val f = XposedHelpers.getObjectField(userObj, "first_name") as? String
+                                    val l = XposedHelpers.getObjectField(userObj, "last_name") as? String
+                                    listOfNotNull(f, l).joinToString(" ").takeIf { it.isNotBlank() }
+                                }.getOrNull()
+                                XposedBridge.log("$TAG: TG title='$title' chat=${chatObj?.javaClass?.simpleName} user=${userObj?.javaClass?.simpleName}")
+
+                                val id = normalizeToFirestoreId(chatIdInt.toString(), "telegram", title)
+                                XposedBridge.log("$TAG: TG chatId → $id")
+                                OverlayController.setChatId(id)
+                                OverlayController.setChatName(title)
+                            } catch (e: Throwable) {
+                                XposedBridge.log("$TAG: TG ChatActivity resume failed: $e")
+                            }
+                        }, 600)
+                    }
+                }
+            )
+            XposedBridge.log("$TAG: Hooked org.telegram.ui.ChatActivity.onResume")
+        } catch (e: Throwable) {
+            XposedBridge.log("$TAG: hookTelegramChatNavigation failed: $e")
+        }
+    }
+
     private fun extractFromFragmentArgs(args: android.os.Bundle?, pkg: String, fragName: String): String? {
         if (args == null || args.isEmpty) return null
         val prefix = when {
@@ -469,6 +549,9 @@ class GlitchDraftHook : IXposedHookLoadPackage {
         if (v.isBlank() || v.length > 128 || v.any { it.isWhitespace() }) return false
         if (v.lowercase() in BANNED_ID_VALUES) return false
         if (prefix == "instagram") return v.matches(Regex("^\\d{6,}$"))
+        // telegram: chat ids are ints (users/groups/channels all positive);
+        // negative only appears in the web url hash form, never here
+        if (prefix == "telegram") return v.matches(Regex("^-?\\d{3,}$"))
         return true
     }
 
@@ -521,6 +604,14 @@ class GlitchDraftHook : IXposedHookLoadPackage {
                 // bridges instagram_web_* ↔ instagram_android_* like messenger.
                 val slug = name?.let { sanitizeNameSlug(it) }?.takeIf { it.isNotBlank() }
                 if (slug != null) "instagram_android_${raw}_${slug}" else "instagram_android_$raw"
+            }
+            "telegram" -> {
+                // raw = ChatActivity.chatId (int: user id / group id / channel
+                // id). the web extension uses the url hash instead (#<id>,
+                // #-100<id> or #name) — a different id space, so slug-pick
+                // bridges telegram_web_* ↔ telegram_android_* like the others.
+                val slug = name?.let { sanitizeNameSlug(it) }?.takeIf { it.isNotBlank() }
+                if (slug != null) "telegram_android_${raw}_${slug}" else "telegram_android_$raw"
             }
             else -> "${prefix}_$raw"
         }

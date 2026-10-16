@@ -628,6 +628,31 @@
       return slug ? `instagram_web_${igMatch[1]}_${slug}` : `instagram_web_${igMatch[1]}`;
     }
 
+    // Telegram Web: chat lives in the url hash — #123456 (user),
+    // #-100123… / #-123 (group), #c123…/msgid (channel), #@username
+    // ("_" escaped to "-" so the id stays parseable). inline name+slug,
+    // byte-equal to the extension fork's output.
+    if (url.includes('web.telegram.org')) {
+      const raw = decodeURIComponent((window.location.hash || '').slice(1));
+      const cForm = raw.match(/^c(\d+)/);
+      const numeric = cForm ? `-100${cForm[1]}` : (raw.match(/^(-?\d+)/) || [])[1];
+      const key = numeric || (raw.startsWith('@') ? raw.slice(1).replace(/_/g, '-') : null);
+      if (key) {
+        const tsel = ['.chat-info .chat-title', '.chat-info-container .chat-title',
+                      '.ChatInfo .ChatTitle', '.title-wrapper .title', '.message-title .title'];
+        let name = null;
+        for (const sel of tsel) {
+          const t = document.querySelector(sel)?.textContent?.trim();
+          if (t && t.length > 0 && t.length < 200 && !/^telegram$/i.test(t)) { name = t; break; }
+        }
+        const slug = name
+          ? name.trim().toLowerCase().replace(/[^\p{L}\p{N}]/gu, '_').replace(/_+/g, '_').replace(/^_|_$/g, '').substring(0, 50)
+          : null;
+        return slug ? `telegram_web_${key}_${slug}` : `telegram_web_${key}`;
+      }
+      return null; // no chat open — never fall through to the url sanitizer
+    }
+
     // Try to match Facebook Messenger chat pattern
     const fbMatch = url.match(/\/t\/(\d+)/);
     if (fbMatch) {

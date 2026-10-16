@@ -25,6 +25,7 @@
                 "*://*.discord.com/channels/*",
                 "*://web.whatsapp.com/*",
                 "*://*.instagram.com/*",
+                "*://web.telegram.org/*",
                 "*://*.hostseba.com/register.php*"
             ],
             "js": [

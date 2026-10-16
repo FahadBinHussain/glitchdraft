@@ -625,6 +625,27 @@
             return nameSlug ? `instagram_web_${igMatch[1]}_${nameSlug}` : `instagram_web_${igMatch[1]}`;
         }
 
+        // Telegram Web: the chat lives in the url hash — #123456 (user),
+        // #-100123… / #-123 (supergroup/group), #c123…/msgid (t.me/c deep
+        // link → channel id), #@username (named chat; telegram usernames are
+        // [a-z0-9_] so "_" is escaped to "-" to keep the id parseable).
+        // numeric spaces differ from the android ChatActivity.chatId, so
+        // cross-device matching rides the name slug like the others.
+        if (url.includes('web.telegram.org')) {
+            const raw = decodeURIComponent((window.location.hash || '').slice(1));
+            if (raw) {
+                const cForm = raw.match(/^c(\d+)/);
+                const numeric = cForm ? `-100${cForm[1]}` : (raw.match(/^(-?\d+)/) || [])[1];
+                const key = numeric || (raw.startsWith('@') ? raw.slice(1).replace(/_/g, '-') : null);
+                if (key) {
+                    const name = getCurrentChatName();
+                    const nameSlug = name ? sanitizeNameSlug(name) : null;
+                    return nameSlug ? `telegram_web_${key}_${nameSlug}` : `telegram_web_${key}`;
+                }
+            }
+            return null; // no chat open — never fall through to the url sanitizer
+        }
+
         // Try to match Facebook Messenger chat pattern
         const fbMatch = url.match(/\/t\/(\d+)/);
         if (fbMatch) {
@@ -682,7 +703,7 @@
 
         cleaned = cleaned
             .replace(/^conversation\s+with\s+/i, '')
-            .replace(/\s*\(\s*(?:messenger|instagram)_(?:web|android)_\d+(?:_[^)]+)?\s*\)\s*$/i, '')
+            .replace(/\s*\(\s*(?:messenger|instagram|telegram)_(?:web|android)_-?\d+(?:_[^)]+)?\s*\)\s*$/i, '')
             .replace(/\s*[-–|]\s*(?:Messenger|Facebook)\s*$/i, '')
             .trim();
 
@@ -693,7 +714,7 @@
     }
 
     function getDisplayNameFromChatId(chatId) {
-        const crossMatch = chatId?.match(/^(?:messenger|instagram)_(?:web|android)_\d+_(.+)$/);
+        const crossMatch = chatId?.match(/^(?:messenger|instagram|telegram)_(?:web|android)_-?\d+_(.+)$/);
         if (crossMatch) {
             return crossMatch[1]
                 .replace(/_/g, ' ')
@@ -718,6 +739,23 @@
             const el = headerH2 || h2s[h2s.length - 1];
             const name = el?.textContent?.trim();
             if (name && name.length > 0 && name.length < 200) return name;
+            return null;
+        }
+
+        // ── Telegram Web (k + a versions) ──
+        if (url.includes('web.telegram.org')) {
+            const selectors = [
+                '.chat-info .chat-title',        // k version header title
+                '.chat-info-container .chat-title',
+                '.ChatInfo .ChatTitle',
+                '.title-wrapper .title',         // a version header title
+                '.message-title .title'
+            ];
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                const t = el?.textContent?.trim();
+                if (t && t.length > 0 && t.length < 200 && !/^telegram$/i.test(t)) return t;
+            }
             return null;
         }
 

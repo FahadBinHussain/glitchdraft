@@ -144,7 +144,7 @@
         const list = await neonRequest('/api/drafts', 'GET');
         const drafts = list?.drafts || {};
         const esc = String(nameSlug).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const anchor = new RegExp('^(messenger|instagram)_(web|android)_\\d+_' + esc + '$');
+        const anchor = new RegExp('^(messenger|instagram|telegram)_(web|android)_-?\\d+_' + esc + '$');
         const slugify = (s) => String(s || '').trim().toLowerCase()
             .replace(/[^\p{L}\p{N}]/gu, '_').replace(/_+/g, '_')
             .replace(/^_|_$/g, '').substring(0, 50);
@@ -163,7 +163,7 @@
     }
 
     async function neonResolveThreadId(chatId) {
-        const slugMatch = String(chatId).match(/^(?:messenger|instagram)_(?:web|android)_\d+_(.+)$/);
+        const slugMatch = String(chatId).match(/^(?:messenger|instagram|telegram)_(?:web|android)_-?\d+_(.+)$/);
         if (slugMatch) {
             const picked = await neonPickBySlug(slugMatch[1]);
             if (picked) return picked;

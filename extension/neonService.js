@@ -64,7 +64,7 @@ class NeonService {
             // Cross-platform name match: web/android numeric spaces never overlap,
             // so the only shared key is the display-name slug. Rank candidates by
             // contactName > web row > newest lastModified (mirrors Android's picker).
-            const slugMatch = threadId.match(/^(?:messenger|instagram)_(?:web|android)_\d+_(.+)$/);
+            const slugMatch = threadId.match(/^(?:messenger|instagram|telegram)_(?:web|android)_-?\d+_(.+)$/);
             if (slugMatch) {
                 const picked = await this.findDocByNameSlug(slugMatch[1], threadId);
                 if (picked) {
@@ -111,7 +111,7 @@ class NeonService {
     async findDocByNameSlug(nameSlug, excludeId = null) {
         const allDrafts = await this.getAllDrafts();
         const esc = String(nameSlug).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const anchor = new RegExp("^(messenger|instagram)_(web|android)_\\d+_" + esc + "$");
+        const anchor = new RegExp("^(messenger|instagram|telegram)_(web|android)_-?\\d+_" + esc + "$");
         const slugify = (s) => String(s || "").trim().toLowerCase()
             .replace(/[^\p{L}\p{N}]/gu, "_")
             .replace(/_+/g, "_")
@@ -175,7 +175,7 @@ class NeonService {
     }
 
     isCrossPlatformThreadId(threadId) {
-        return /^(?:messenger|instagram)_(?:web|android)_\d+(?:_.+)?$/.test(threadId || "");
+        return /^(?:messenger|instagram|telegram)_(?:web|android)_-?\d+(?:_.+)?$/.test(threadId || "");
     }
 
     getMessengerNumericId(threadId) {

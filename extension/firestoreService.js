@@ -38,7 +38,7 @@ class FirestoreService {
         // IG:      "instagram_web_17846415453040180_ryujin" (android = native thread key)
         // → extract the name slug (everything after the numeric segment),
         //   list all docs, find any doc with the same name slug.
-        const messengerMatch = threadId.match(/^(?:messenger|instagram)_(?:web|android)_(\d+)_(.+)$/);
+        const messengerMatch = threadId.match(/^(?:messenger|instagram|telegram)_(?:web|android)_(-?\d+)_(.+)$/);
         if (messengerMatch) {
             const numericId = messengerMatch[1];
             const nameSlug = messengerMatch[2];
@@ -50,7 +50,7 @@ class FirestoreService {
                 //    name slug, ranked: contactName slug match > web row > newest
                 //    lastModified (same ranking as Android's DraftRepository).
                 const esc = nameSlug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-                const anchor = new RegExp("^(messenger|instagram)_(web|android)_\\d+_" + esc + "$");
+                const anchor = new RegExp("^(messenger|instagram|telegram)_(web|android)_-?\\d+_" + esc + "$");
                 const slugify = (s) => String(s || "").trim().toLowerCase()
                     .replace(/[^\p{L}\p{N}]/gu, "_").replace(/_+/g, "_")
                     .replace(/^_|_$/g, "").substring(0, 50);

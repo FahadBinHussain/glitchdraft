@@ -110,7 +110,7 @@ class DraftRepository(private val context: Context) {
     // Never plain firstOrNull: a stale slug on someone else's thread (Fatima row
     // ending _cat_fren, Fahmida row ending _fatima_afroz) would win arbitrarily.
     private fun pickBestRow(rows: List<DraftRowMeta>, nameSlug: String): DraftRowMeta? {
-        val anchor = Regex("^(messenger|instagram)_(web|android)_\\d+_" + Regex.escape(nameSlug) + "$")
+        val anchor = Regex("^(messenger|instagram|telegram)_(web|android)_-?\\d+_" + Regex.escape(nameSlug) + "$")
         return rows
             .filter { anchor.matches(it.id) }
             .sortedWith(
@@ -130,7 +130,7 @@ class DraftRepository(private val context: Context) {
     }
 
     private fun getDraftFromFirebase(cfg: StorageConfig.Firebase, chatId: String): List<Draft> {
-        val nameSlugMatch = Regex("^(?:messenger|instagram)_(?:web|android)_\\d+_(.+)$").find(chatId)
+        val nameSlugMatch = Regex("^(?:messenger|instagram|telegram)_(?:web|android)_-?\\d+_(.+)$").find(chatId)
         if (nameSlugMatch != null) {
             val nameSlug = nameSlugMatch.groupValues[1]
             val best = pickBestRow(listDraftRowsFirebase(cfg), nameSlug)
@@ -146,7 +146,7 @@ class DraftRepository(private val context: Context) {
     }
 
     private fun getDraftFromNeon(cfg: StorageConfig.Neon, chatId: String): List<Draft> {
-        val nameSlugMatch = Regex("^(?:messenger|instagram)_(?:web|android)_\\d+_(.+)$").find(chatId)
+        val nameSlugMatch = Regex("^(?:messenger|instagram|telegram)_(?:web|android)_-?\\d+_(.+)$").find(chatId)
         if (nameSlugMatch != null) {
             val nameSlug = nameSlugMatch.groupValues[1]
             val best = pickBestRow(listDraftRowsNeon(cfg), nameSlug)
@@ -295,13 +295,13 @@ class DraftRepository(private val context: Context) {
     }
 
     private fun resolveMessengerRowFirebase(cfg: StorageConfig.Firebase, chatId: String): DraftRowMeta? {
-        val nameSlugMatch = Regex("^(?:messenger|instagram)_(?:web|android)_\\d+_(.+)$").find(chatId) ?: return null
+        val nameSlugMatch = Regex("^(?:messenger|instagram|telegram)_(?:web|android)_-?\\d+_(.+)$").find(chatId) ?: return null
         val nameSlug = nameSlugMatch.groupValues[1]
         return pickBestRow(listDraftRowsFirebase(cfg), nameSlug)
     }
 
     private fun resolveMessengerRowNeon(cfg: StorageConfig.Neon, chatId: String): DraftRowMeta? {
-        val nameSlugMatch = Regex("^(?:messenger|instagram)_(?:web|android)_\\d+_(.+)$").find(chatId) ?: return null
+        val nameSlugMatch = Regex("^(?:messenger|instagram|telegram)_(?:web|android)_-?\\d+_(.+)$").find(chatId) ?: return null
         val nameSlug = nameSlugMatch.groupValues[1]
         return pickBestRow(listDraftRowsNeon(cfg), nameSlug)
     }

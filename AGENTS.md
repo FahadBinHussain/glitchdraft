@@ -79,8 +79,9 @@ button on `edge://extensions` is fallback.
   scope** — this happened when the debug build was swapped for the signed release
   apk. restore with `modules enable com.fahad.glitchdraft.lsposed` +
   `scope set com.fahad.glitchdraft.lsposed com.facebook.orca/0 com.facebook.katana/0
-  com.discord/0 com.whatsapp/0` (the 4 installed packages from `TARGET_PACKAGES`
-  in `hook/GlitchDraftHook.kt`). no reboot needed — verify it stuck with
+  com.discord/0 com.whatsapp/0 com.instagram.android/0 org.telegram.messenger/0`
+  (the installed app packages from `TARGET_PACKAGES` in `hook/GlitchDraftHook.kt`).
+  no reboot needed — verify it stuck with
   `su -c 'grep -a -h glitchdraft /data/adb/lspd/log/*.log | tail'`: a
   `Loading legacy module ... /data/app/~~<path>/base.apk` line must appear with
   the current path after `am force-stop com.facebook.orca` + relaunch.
@@ -306,6 +307,37 @@ button on `edge://extensions` is fallback.
   `%s` spaces, verify the field with a dump, fix with `KEYCODE_MOVE_END` + a
   `keyevent 67 67 …` burst before retyping.
 
+## telegram (added 2026-10-16 — verification pending)
+
+- code-complete on both surfaces but nothing has been verified against a live
+  telegram session yet — don't treat any of it as proven until the verify steps
+  at the bottom pass.
+- web (extension only): config.js `SUPPORTED_SITES` + background `onInstalled`
+  reload pattern + manifest host_permissions `https://web.telegram.org/*`
+  (extension 1.3.0). chat key comes from the url hash: `#123…` (user),
+  `#-100…`/`#-…` (groups), `#c123…` (channel deep link → `-100123…`),
+  `#@name` (usernames are `[a-z0-9_]`, `_` escaped to `-` to stay parseable);
+  id = `telegram_web_<key>_<slug>`, name via `.chat-info .chat-title` /
+  `.title-wrapper .title` selectors (k + a web versions); a chatless
+  web.telegram.org returns null and never falls through to the url sanitizer.
+- native android: `GlitchDraftHook.hookTelegramChatNavigation` — tg's
+  ChatActivity is NOT an android Fragment (extends tg's own BaseFragment inside
+  LaunchActivity), so the generic fragment scan never sees it: hooks
+  `org.telegram.ui.ChatActivity.onResume`, reads the `chatId` field +
+  `MessagesController.getInstance(account).getChat/getUser` after a 600ms
+  settle. id = `telegram_android_<chatIdInt>_<slug>`; id validation is
+  `^-?\d{3,}$` under the `telegram` prefix (web hash may be negative, native
+  never is). numeric spaces differ between web hash and native chatId, so
+  cross-device matching rides the name slug like messenger/instagram.
+- slug-pick anchors now `^(messenger|instagram|telegram)_(web|android)_-?\d+_<slug>$`
+  in all four implementations (DraftRepository.pickBestRow, neonService,
+  firestoreService, glitchdraft_shim.neonPickBySlug) — change one, change all.
+- verify (when unparked): web — Edge with `--remote-debugging-port=9222
+  --profile-directory=Default`, open a web.telegram.org chat, panel id starts
+  `telegram_web_`; android — open a native chat, panel id
+  `telegram_android_<int>_<slug>`, save a draft, confirm the backend row +
+  slug-pick round-trip. delete any test row after.
+
 ## known issues
 
 - fixed: `handleChatChange()` called `loadDraftsFromCloud()`, which existed nowhere —
@@ -328,7 +360,7 @@ button on `edge://extensions` is fallback.
   `DraftRepository.pickBestRow` (kotlin), `neonService.findDocByNameSlug`,
   the `firestoreService` slug sort, and `glitchdraft_shim.neonPickBySlug` —
   change one, change all. anchor is
-  `^(messenger|instagram)_(web|android)_\d+_<slug>$` (plain `endsWith`
+  `^(messenger|instagram|telegram)_(web|android)_-?\d+_<slug>$` (plain `endsWith`
   over-matches: slug `messenger` would hit `_1_messenger`). the web-over-android
   preference is `id.contains("_web_")` on both sides (counts instagram rows
   too), and firestoreService's legacy bare/no-slug fallbacks are deliberately
