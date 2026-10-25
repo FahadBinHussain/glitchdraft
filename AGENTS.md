@@ -306,6 +306,41 @@ button on `edge://extensions` is fallback.
   twice). `input text 'img%stest'` (space via `%s`) typed `imgt est` — avoid
   `%s` spaces, verify the field with a dump, fix with `KEYCODE_MOVE_END` + a
   `keyevent 67 67 …` burst before retyping.
+- build 7 (1.2.1) re-verified end to end on the ফাহাদ thread: pick → chip →
+  `build7-imgtest` + 136 KB `data:image/jpeg;base64` row → chip/input cleared →
+  row deleted back to `exists:false`.
+
+## messenger deep links (added 2026-10-25)
+
+- `fb-messenger://user-thread/<fbid>` parses as `host=user-thread`,
+  `path=/<fbid>` — the id is the last path segment, never
+  `path.startsWith("/user-thread/")`. `extractChatIdFromActivity` checks
+  `uri.host == "user-thread" || uri.host == "thread"`; an explicit
+  `am start -n …/IntentHandlerActivity` also works (the implicit VIEW intent is
+  fine too), and `fb-messenger://thread/<id>` resolves to nothing.
+- the deep link only reaches `IntentHandlerActivity`, which immediately
+  forwards to MainActivity: `onResume [MainActivity] intent=null chatId=null`.
+  the thread surface that follows carries no `thread_key` extra, so a chat
+  opened this way has NO id unless the id came from the URI — that's the whole
+  reason the deep-link branch exists.
+- an Instagram-linked thread (`ONE_TO_ONE:<fbid>:<me>`, banner "You can no
+  longer chat with people on Instagram…", composer disabled) is still openable
+  and still saves drafts — the panel doesn't need the native composer. but
+  MsysLookupService drops the thread from the local DB after the link is
+  severed (`Could not find thread with key ONE_TO_ONE:…`), and then the deep
+  link silently lands on the inbox. a pull-to-refresh + retry brings it back;
+  it also shows up as a normal inbox row, so prefer opening it from the inbox
+  (that path DOES carry `thread_key`, giving the canonical
+  `messenger_android_<fbid>_<slug>` id instead of the slug-less deep-link one).
+- MIUI revokes `SYSTEM_ALERT_WINDOW` on its own (`appops get` shows
+  `ignore; rejectTime=…`). without it the overlay silently drops to in-window
+  mode, and there the panel's EditText never takes focus — `dumpsys
+  input_method` shows the app's own `ComposerEditText` as `mServedView` and the
+  typed text goes to the native composer instead. fix before testing:
+  `appops set com.facebook.orca SYSTEM_ALERT_WINDOW allow` + same for the
+  module pkg, then restart the app. in WM mode the toggle's real screen y is
+  the mAttrs y + 80 (status bar): saved `togPos=940,17` renders at
+  `[940,97][1077,234]`, so tap (1008,165), not (1008,85).
 
 ## telegram (added 2026-10-16 — verification pending)
 

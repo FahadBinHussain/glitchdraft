@@ -210,6 +210,15 @@ class GlitchDraftHook : IXposedHookLoadPackage {
                                 val last = segments.lastOrNull() ?: return@let null
                                 normalizeToFirestoreId(last, "messenger")
                             }
+                            uri.scheme == "fb-messenger" &&
+                                (uri.host == "user-thread" || uri.host == "thread") -> {
+                                // deep links carry the thread key as the last path segment:
+                                // fb-messenger://user-thread/<fbid> parses as host=user-thread,
+                                // path=/<fbid>. the thread view opened this way passes no
+                                // thread_key extra, so the intent uri is the only id source.
+                                val last = segments.lastOrNull() ?: return@let null
+                                normalizeToFirestoreId(last, "messenger")
+                            }
                             path.contains("/t/") -> {
                                 val idx = segments.indexOf("t")
                                 if (idx >= 0 && idx + 1 < segments.size) segments[idx + 1] else null
