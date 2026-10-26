@@ -102,6 +102,11 @@ button on `edge://extensions` is fallback.
   `su -c 'grep -a -h glitchdraft /data/adb/lspd/log/*.log | tail'`: a
   `Loading legacy module ... /data/app/~~<path>/base.apk` line must appear with
   the current path after `am force-stop com.facebook.orca` + relaunch.
+- git-bash gotcha: `adb shell su -c '/data/adb/…'` run from Git Bash gets MSYS
+  path conversion and fails with
+  `C:/Users/…/AppData/…/data/adb/modules/…: inaccessible or not found` (the
+  whole `/data/adb/...` becomes a Windows path). prefix the call with
+  `MSYS_NO_PATHCONV=1` — it applies to every vector cli / lspd path below.
 - gotchas: MIUI pops a transient "Can't open this app / contact your IT admin"
   dialog on first launch of a fresh install — the process is already running and
   it clears itself, don't chase it. `adb shell input text` sometimes appends a
@@ -478,6 +483,31 @@ button on `edge://extensions` is fallback.
 - cleanup after a manual test: `DELETE /api/people?id=<personId>` (no UI for it
   yet) or delete the `person_links` + `people` rows — an unlinked person row is
   invisible in the panel but still lists in `GET /api/people`.
+- **android (added 2026-10-26, module 1.4.0)**: `DraftRepository` gained the
+  people calls (`getPerson`/`createPerson`/`linkThread`/`unlinkThread`) on the
+  same `requireNeon()` gate — firebase throws instead of no-op'ing, same rule as
+  `requireNeonService()`. `getPerson` returns `PersonLookup(person?, candidates)`:
+  the picker must work while nothing is linked, so candidates are read even when
+  `person` is null (the web keeps them in `personCache` for the same reason).
+  `OverlayController` renders the strip under the header (hidden until the
+  lookup answers), builds `PanelState(drafts, person, candidates, error)` in one
+  pass and compares that whole value in the sync tick, and puts the draft list
+  + link picker in one `FrameLayout` so the picker covers the list without a
+  second window. identity uses the local `threadKey()` — same slug-less rule as
+  the web — for own-vs-foreign and for chip unlink eligibility; foreign rows get
+  a platform badge + **Copy only**, and a chip `×` calls `unlinkThread` (drafts
+  stay saved). panel is 320dp wide, so the chip row lives in a
+  `HorizontalScrollView`.
+- verification status: **web verified** twice in real Edge (raw CDP, then
+  `browser-use` with `BU_CDP_WS`): empty state paints, picker lists 12
+  candidates, link merges a foreign draft as a copy-only card, chip `×` unlinks,
+  and the test person was deleted afterwards (`GET /api/people` → `[]`).
+  **android: compiled + release-built + installed (1.4.0) but NOT yet exercised
+  on the phone** — the device dropped off adb before the on-device run. the
+  phone run still needs: `appops set com.facebook.orca SYSTEM_ALERT_WINDOW
+  allow`, `am force-stop com.facebook.orca` (a fresh install is only loaded on
+  the next app start), open a chat, tap the toggle, then `uiautomator dump`
+  should show `Link this chat to the same person elsewhere` / `+ link`.
 
 ## driving real edge for extension tests
 

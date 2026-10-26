@@ -33,6 +33,7 @@ import android.view.WindowManager
 import android.webkit.WebView
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -146,7 +147,36 @@ object OverlayController {
     // deletes made on web show up without reopening the panel. re-render only
     // when content actually changed (no 10s flicker).
     private val syncHandler = Handler(Looper.getMainLooper())
-    private var lastRenderedDrafts: List<DraftRepository.Draft> = emptyList()
+    private var lastRenderedState: PanelState? = null
+
+    // ----- people / cross-platform identity (mirrors extension/content.js) ----
+    // the strip sits under the header: name + draft/app counts + per-platform
+    // chips. a chip × unlinks that identity (drafts stay saved) and the current
+    // chat's own chip is never unlinkable — the strip is anchored on it.
+    private var personStrip: LinearLayout? = null
+    private var personSheet: LinearLayout? = null   // link picker, covers the list
+    private var bodyFrame: FrameLayout? = null
+    private var currentPerson: DraftRepository.PersonInfo? = null
+    private var personCandidates: List<DraftRepository.PersonCandidate> = emptyList()
+    private var personLookupError: String? = null
+    private var personFilter: String = "all"        // "all" | platform key
+
+    /** Everything the panel renders in one pass — fetched together, compared as
+     *  one value so the sync tick repaints only when something really changed. */
+    private data class PanelState(
+        val drafts: List<DraftRepository.Draft>,
+        val person: DraftRepository.PersonInfo?,
+        val candidates: List<DraftRepository.PersonCandidate>,
+        val personError: String?
+    )
+
+    /** One row of the list: own draft, or another identity's draft (foreign). */
+    private data class MergedDraft(
+        val threadId: String,
+        val contactName: String?,
+        val foreign: Boolean,
+        val draft: DraftRepository.Draft
+    )
     private val syncRunnable = object : Runnable {
         override fun run() {
             if (!isAttached || !isPanelVisible || panelView?.visibility != View.VISIBLE) {
@@ -480,7 +510,23 @@ object OverlayController {
             LinearLayout.LayoutParams.WRAP_CONTENT
         ))
 
-        // --- Draft list ---
+        // --- Person strip (cross-platform identity) ---
+        // hidden until the lookup answers, same rule as the extension panel
+        personStrip = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(ctx, 10), dp(ctx, 6), dp(ctx, 10), dp(ctx, 6))
+            setBackgroundColor(0xFFEAF3FF.toInt())
+            visibility = View.GONE
+        }
+        root.addView(personStrip, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        // --- Body: draft list + link picker share one frame, so the picker can
+        //     cover the list without opening a second window ---
+        val frame = FrameLayout(ctx)
+        bodyFrame = frame
+
         val scroll = ScrollView(ctx)
         draftList = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -490,7 +536,23 @@ object OverlayController {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ))
-        root.addView(scroll, LinearLayout.LayoutParams(
+        frame.addView(scroll, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        personSheet = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(ctx, 8), dp(ctx, 6), dp(ctx, 8), dp(ctx, 6))
+            setBackgroundColor(WHITE)
+            visibility = View.GONE
+        }
+        frame.addView(personSheet, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        root.addView(frame, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
         ))
 
@@ -592,8 +654,10 @@ object OverlayController {
 
         saveBtn.setOnClickListener { saveDraft(ctx) }
         attachBtn.setOnClickListener { launchImagePicker(ctx) }
-        // re-attach / decor migration rebuilds the panel — restore chips
+        // re-attach / decor migration rebuilds the panel — restore chips and
+        // the person strip (both are pure functions of the last fetched state)
         renderStagedRow()
+        renderPersonStrip()
     }
 
     // -------------------------------------------------------------------------
@@ -671,8 +735,8 @@ object OverlayController {
 
         scope.launch {
             try {
-                val drafts = r.getDraft(chatId)
-                Handler(Looper.getMainLooper()).post { renderDrafts(drafts, chatId, r) }
+                val state = fetchPanelState(r, chatId)
+                Handler(Looper.getMainLooper()).post { applyPanelState(state, chatId, r) }
             } catch (e: Throwable) {
                 Handler(Looper.getMainLooper()).post {
                     showEmptyText(list, "Error: ${e.message}")
@@ -681,39 +745,95 @@ object OverlayController {
         }
     }
 
+    /** Drafts first, then the person lookup — same order as the extension, so a
+     *  link/unlink takes one round trip (≈5-10s) before the strip repaints. */
+    private suspend fun fetchPanelState(
+        r: DraftRepository,
+        chatId: String
+    ): PanelState {
+        val drafts = r.getDraft(chatId)
+        var lookup = DraftRepository.PersonLookup(null, emptyList())
+        var error: String? = null
+        try {
+            lookup = r.getPerson(chatId, _currentChatName)
+            error = null
+        } catch (e: Throwable) {
+            // loud, never silent: the strip shows the failure instead of
+            // pretending this chat has no person
+            lookup = DraftRepository.PersonLookup(null, emptyList())
+            error = e.message ?: e.toString()
+            XposedBridge.log("$TAG: people lookup failed for $chatId: $error")
+        }
+        return PanelState(drafts, lookup.person, lookup.candidates, error)
+    }
+
     // sync-tick fetch: never clears first, re-renders only when server content
     // changed — a transient network error just skips the tick (next one retries).
     private fun syncDrafts() {
         val r = repo ?: return
         val chatId = currentChatId() ?: currentPackage
         scope.launch {
-            val drafts = try { r.getDraft(chatId) } catch (_: Throwable) { return@launch }
+            val state = try { fetchPanelState(r, chatId) } catch (_: Throwable) { return@launch }
             Handler(Looper.getMainLooper()).post {
                 if (!isPanelVisible || panelView?.visibility != View.VISIBLE) return@post
-                if (drafts == lastRenderedDrafts) return@post
-                renderDrafts(drafts, chatId, r)
+                if (state == lastRenderedState) return@post
+                applyPanelState(state, chatId, r)
             }
         }
     }
 
-    private fun renderDrafts(drafts: List<DraftRepository.Draft>, chatId: String, r: DraftRepository) {
+    private fun applyPanelState(state: PanelState, chatId: String, r: DraftRepository) {
+        currentPerson = state.person
+        personCandidates = state.candidates
+        personLookupError = state.personError
+        if (state.person == null) personFilter = "all"
+        renderPersonStrip()
+        renderDrafts(state, chatId, r)
+    }
+
+    private fun renderDrafts(state: PanelState, chatId: String, r: DraftRepository) {
         val list = draftList ?: return
-        lastRenderedDrafts = drafts
+        lastRenderedState = state
         list.removeAllViews()
-        if (drafts.isEmpty()) {
-            showEmptyText(list, "No drafts saved yet")
+
+        val rows = mergedRows(state, chatId)
+        val visible = if (personFilter == "all") rows
+        else rows.filter { platformOf(it.threadId) == personFilter }
+
+        if (visible.isEmpty()) {
+            showEmptyText(
+                list,
+                if (personFilter != "all") "No drafts on this platform yet"
+                else "No drafts saved yet"
+            )
         } else {
-            drafts.forEach { draft -> addDraftRow(list, draft, chatId, r) }
+            visible.forEach { row -> addDraftRow(list, row, chatId, r) }
         }
+    }
+
+    /** Own chat's drafts plus every other thread the person owns, newest first.
+     *  Identity (own vs foreign) rides on the slug-less thread key: the slug
+     *  rides on the live display name and can differ from the linked id. */
+    private fun mergedRows(state: PanelState, chatId: String): List<MergedDraft> {
+        val person = state.person ?: run {
+            return state.drafts.map { MergedDraft(chatId, null, foreign = false, draft = it) }
+        }
+        val ownKey = threadKey(chatId)
+        return person.threads.flatMap { thread ->
+            val own = threadKey(thread.threadId) == ownKey
+            val drafts = if (own) state.drafts else thread.drafts
+            drafts.map { MergedDraft(thread.threadId, thread.contactName, foreign = !own, draft = it) }
+        }.sortedByDescending { it.draft.timestamp }
     }
 
     private fun addDraftRow(
         container: LinearLayout,
-        draft: DraftRepository.Draft,
+        row: MergedDraft,
         chatId: String,
         r: DraftRepository
     ) {
         val ctx = container.context
+        val draft = row.draft
         val plainText = htmlToPlainText(draft.html)
         // images survive an inline edit — saveEdit re-appends these exact tags
         // after the edited text (previously they were dropped silently)
@@ -724,6 +844,43 @@ object OverlayController {
         val card = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(ctx, 6), dp(ctx, 8), dp(ctx, 6), dp(ctx, 6))
+        }
+
+        // ── Foreign row: another app's draft for the same person ───────────
+        // badge names the source thread; Use/Edit/Delete would act on *this*
+        // chat's thread, so only Copy is offered (same rule as the web panel).
+        if (row.foreign) {
+            val badgeRow = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, 0, 0, dp(ctx, 4))
+            }
+            badgeRow.addView(TextView(ctx).apply {
+                text = platformLabel(platformOf(row.threadId))
+                textSize = 9f
+                setTextColor(WHITE)
+                setPadding(dp(ctx, 5), dp(ctx, 2), dp(ctx, 5), dp(ctx, 2))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    setColor(ACCENT)
+                    cornerRadius = dp(ctx, 3).toFloat()
+                }
+            }, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+            badgeRow.addView(TextView(ctx).apply {
+                text = "  " + (row.contactName ?: row.threadId)
+                textSize = 9f
+                setTextColor(GREY_TXT)
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(
+                0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
+            ))
+            card.addView(badgeRow, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
         }
 
         // ── Display group (view mode) ─────────────────────────────────────────
@@ -795,12 +952,22 @@ object OverlayController {
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).also { it.marginEnd = dp(ctx, 5) }
 
-        actionsRow.addView(useBtn,  btnLp())
-        actionsRow.addView(copyBtn, btnLp())
-        actionsRow.addView(editBtn, btnLp())
-        actionsRow.addView(delBtn,  LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
-        ))
+        if (row.foreign) {
+            // read-only here: Use/Edit/Delete address a row in *this* chat's
+            // thread, so this row gets Copy alone
+            actionsRow.addView(copyBtn, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        } else {
+            actionsRow.addView(useBtn,  btnLp())
+            actionsRow.addView(copyBtn, btnLp())
+            actionsRow.addView(editBtn, btnLp())
+            actionsRow.addView(delBtn,  LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
 
         displayGroup.addView(actionsRow, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
@@ -1652,6 +1819,384 @@ object OverlayController {
     }
 
     // -------------------------------------------------------------------------
+    // People / cross-platform identity
+    // -------------------------------------------------------------------------
+
+    private fun platformOf(threadId: String): String =
+        threadId.split("_").firstOrNull()?.takeIf { it.isNotEmpty() } ?: "unknown"
+
+    private fun platformLabel(platform: String): String = when (platform) {
+        "messenger" -> "MSGR"
+        "instagram" -> "IG"
+        "telegram" -> "TG"
+        "whatsapp" -> "WA"
+        "discord" -> "DC"
+        else -> platform.uppercase().take(4)
+    }
+
+    /** `<platform>_<web|android>_<numeric>[_<name-slug>]` — the slug rides on the
+     *  live display name and can appear a beat late, so every identity comparison
+     *  (own vs foreign, load guards) uses the slug-less key. mirrors
+     *  `threadKey()` in extension/content.js. */
+    private fun threadKey(threadId: String): String {
+        val parts = threadId.split("_")
+        val platform = parts.getOrNull(0).orEmpty()
+        val flavor = parts.getOrNull(1).orEmpty()
+        val numeric = parts.getOrNull(2).orEmpty()
+        val numbered = platform == "messenger" || platform == "instagram" || platform == "telegram"
+        return if (numbered && (flavor == "web" || flavor == "android") && numeric.matches(Regex("^-?\\d+$"))) {
+            "${platform}_${flavor}_${numeric}"
+        } else {
+            threadId
+        }
+    }
+
+    private fun renderPersonStrip() {
+        val strip = personStrip ?: return
+        val ctx = strip.context
+        strip.removeAllViews()
+        strip.visibility = View.GONE
+
+        personLookupError?.let { error ->
+            strip.addView(TextView(ctx).apply {
+                text = "People lookup failed: $error"
+                setTextColor(0xFFE74C3C.toInt())
+                textSize = 11f
+            })
+            strip.visibility = View.VISIBLE
+            return
+        }
+
+        val person = currentPerson
+        if (person == null || person.threads.isEmpty()) {
+            val row = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            row.addView(TextView(ctx).apply {
+                text = "Link this chat to the same person elsewhere"
+                setTextColor(GREY_TXT)
+                textSize = 11f
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(
+                makeLinkButton(ctx),
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+            strip.addView(row)
+            strip.visibility = View.VISIBLE
+            return
+        }
+
+        val totalDrafts = person.threads.sumOf { it.drafts.size }
+        val platforms = person.threads.map { platformOf(it.threadId) }.distinct()
+
+        strip.addView(TextView(ctx).apply {
+            text = person.displayName
+            setTextColor(Color.BLACK)
+            textSize = 13f
+            setTypeface(null, android.graphics.Typeface.BOLD)
+        })
+        strip.addView(TextView(ctx).apply {
+            text = "$totalDrafts draft${if (totalDrafts == 1) "" else "s"} · " +
+                "${platforms.size} app${if (platforms.size == 1) "" else "s"}"
+            setTextColor(GREY_TXT)
+            textSize = 10f
+            setPadding(0, 0, 0, dp(ctx, 3))
+        })
+
+        val ownKey = threadKey(currentChatId() ?: currentPackage)
+        val scroller = HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false }
+        val chips = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+
+        chips.addView(makePersonChip(ctx, "All", totalDrafts, "all", null))
+        for (platform in platforms) {
+            val threads = person.threads.filter { platformOf(it.threadId) == platform }
+            val count = threads.sumOf { it.drafts.size }
+            // the current chat's own chip is never unlinkable — the strip is
+            // anchored on it, so it must keep at least one link
+            val foreign = threads.firstOrNull { threadKey(it.threadId) != ownKey }
+            chips.addView(
+                makePersonChip(ctx, platformLabel(platform), count, platform, foreign?.threadId)
+            )
+        }
+        chips.addView(
+            makeLinkButton(ctx),
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        )
+        scroller.addView(chips, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        strip.addView(scroller)
+        strip.visibility = View.VISIBLE
+    }
+
+    private fun makePersonChip(
+        ctx: Context,
+        label: String,
+        count: Int,
+        key: String,
+        unlinkThreadId: String?
+    ): View {
+        val active = personFilter == key
+        val chip = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(ctx, 7), dp(ctx, 3), dp(ctx, 7), dp(ctx, 3))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(if (active) ACCENT else 0xFFCFE4FF.toInt())
+                cornerRadius = dp(ctx, 10).toFloat()
+            }
+        }
+        val lp = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).also { it.marginEnd = dp(ctx, 5) }
+
+        chip.addView(TextView(ctx).apply {
+            text = "$label $count"
+            textSize = 11f
+            setTextColor(if (active) WHITE else 0xFF12406F.toInt())
+            setOnClickListener {
+                personFilter = if (personFilter == key) "all" else key
+                renderPersonStrip()
+                val state = lastRenderedState
+                val r = repo
+                if (state != null && r != null) {
+                    renderDrafts(state, currentChatId() ?: currentPackage, r)
+                }
+            }
+        }, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        if (unlinkThreadId != null) {
+            chip.addView(TextView(ctx).apply {
+                text = "×"
+                textSize = 14f
+                setTextColor(if (active) WHITE else 0xFF12406F.toInt())
+                setPadding(dp(ctx, 5), 0, 0, 0)
+                contentDescription = "Unlink this platform identity (drafts stay saved)"
+                setOnClickListener { unlinkPersonThread(unlinkThreadId) }
+            }, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+
+        chip.layoutParams = lp
+        chip.contentDescription = "Filter $label"
+        return chip
+    }
+
+    private fun makeLinkButton(ctx: Context): TextView = TextView(ctx).apply {
+        text = "+ link"
+        textSize = 11f
+        setTextColor(WHITE)
+        setPadding(dp(ctx, 8), dp(ctx, 3), dp(ctx, 8), dp(ctx, 3))
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(ACCENT)
+            cornerRadius = dp(ctx, 10).toFloat()
+        }
+        contentDescription = "Link another platform identity to this person"
+        setOnClickListener { openLinkPicker() }
+    }
+
+    private fun openLinkPicker() {
+        val sheet = personSheet ?: return
+        val ctx = sheet.context
+        sheet.removeAllViews()
+
+        val head = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        head.addView(TextView(ctx).apply {
+            text = "Link to " + (currentPerson?.displayName ?: _currentChatName ?: "this chat")
+            textSize = 13f
+            setTextColor(Color.BLACK)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(TextView(ctx).apply {
+            text = "✕"
+            textSize = 17f
+            setPadding(dp(ctx, 8), 0, 0, 0)
+            setOnClickListener { closeLinkPicker() }
+        })
+        sheet.addView(head, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        val candidates = personCandidates
+        if (candidates.isEmpty()) {
+            sheet.addView(TextView(ctx).apply {
+                text = "No other threads found. Save a draft in another app first."
+                setTextColor(GREY_TXT)
+                textSize = 11f
+                setPadding(0, dp(ctx, 8), 0, dp(ctx, 8))
+            })
+        } else {
+            // name-similar threads first, then the rest — a suggestion is never
+            // written on its own, the tap is the confirmation
+            val ranked = candidates.sortedByDescending { it.score }
+            ranked.forEach { candidate -> sheet.addView(makeCandidateRow(ctx, candidate)) }
+        }
+
+        sheet.addView(TextView(ctx).apply {
+            text = "Cancel"
+            textSize = 12f
+            setTextColor(WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, dp(ctx, 8), 0, dp(ctx, 8))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(0xFF888888.toInt())
+                cornerRadius = dp(ctx, 6).toFloat()
+            }
+            setOnClickListener { closeLinkPicker() }
+        }, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        // tapping the backdrop (not a row) closes the sheet
+        sheet.setOnClickListener { if (it === sheet) closeLinkPicker() }
+        sheet.visibility = View.VISIBLE
+        bodyFrame?.bringChildToFront(sheet)
+    }
+
+    private fun makeCandidateRow(
+        ctx: Context,
+        candidate: DraftRepository.PersonCandidate
+    ): View {
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(ctx, 6), 0, dp(ctx, 6))
+            contentDescription = candidate.threadId
+        }
+        row.addView(TextView(ctx).apply {
+            text = platformLabel(candidate.platform)
+            textSize = 9f
+            setTextColor(WHITE)
+            setPadding(dp(ctx, 5), dp(ctx, 2), dp(ctx, 5), dp(ctx, 2))
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                setColor(ACCENT)
+                cornerRadius = dp(ctx, 3).toFloat()
+            }
+        }, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        val main = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(ctx, 7), 0, dp(ctx, 5), 0)
+        }
+        main.addView(TextView(ctx).apply {
+            text = candidate.contactName ?: candidate.threadId
+            textSize = 12f
+            setTextColor(Color.BLACK)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+        main.addView(TextView(ctx).apply {
+            text = candidate.preview.ifEmpty { "no text draft" }
+            textSize = 10f
+            setTextColor(GREY_TXT)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+        row.addView(main, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+        if (candidate.score > 0) {
+            row.addView(TextView(ctx).apply {
+                text = if (candidate.score >= 100) "same name" else "similar"
+                textSize = 9f
+                setTextColor(0xFF1B7A3D.toInt())
+                setPadding(dp(ctx, 4), 0, 0, 0)
+            }, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ))
+        }
+
+        row.setOnClickListener { linkCandidate(candidate.threadId) }
+        return row
+    }
+
+    private fun closeLinkPicker() {
+        personSheet?.visibility = View.GONE
+    }
+
+    /** Manual + confirmed: tapping a candidate is the confirmation, a name match
+     *  is only ever a suggestion. Creates the person first when nothing is linked. */
+    private fun linkCandidate(candidateThreadId: String) {
+        val r = repo ?: return
+        val chatId = currentChatId() ?: currentPackage
+        val ctx = panelView?.context ?: return
+        val existingPerson = currentPerson
+
+        scope.launch {
+            try {
+                val personId = existingPerson?.id
+                    ?.takeIf { it.isNotBlank() }
+                    ?: r.createPerson(chatId, _currentChatName ?: chatId).also {
+                        if (it.isBlank()) throw IllegalStateException("create person returned no id")
+                    }
+                r.linkThread(personId, candidateThreadId)
+                Handler(Looper.getMainLooper()).post {
+                    closeLinkPicker()
+                    Toast.makeText(
+                        ctx,
+                        "Linked ${platformLabel(platformOf(candidateThreadId))} to " +
+                            (currentPerson?.displayName ?: _currentChatName ?: "this person"),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    loadDrafts()
+                }
+            } catch (e: Throwable) {
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(ctx, "Link failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    private fun unlinkPersonThread(threadId: String) {
+        val r = repo ?: return
+        val ctx = panelView?.context ?: return
+        scope.launch {
+            try {
+                r.unlinkThread(threadId)
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(
+                        ctx,
+                        "Unlinked ${platformLabel(platformOf(threadId))} - drafts are still saved",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    loadDrafts()
+                }
+            } catch (e: Throwable) {
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(ctx, "Unlink failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -1672,9 +2217,17 @@ object OverlayController {
     fun setChatId(id: String) {
         _currentChatId = id
         _currentChatName = null  // reset name; hook will re-populate it via setChatName
+        // a new chat = a new identity question: drop the previous person so the
+        // strip never shows another chat's person while the lookup runs
+        currentPerson = null
+        personCandidates = emptyList()
+        personLookupError = null
+        personFilter = "all"
+        closeLinkPicker()
         // Update the debug label in the panel header if it's visible
         Handler(Looper.getMainLooper()).post {
             chatIdLabel?.text = chatIdDebugText()
+            renderPersonStrip()
             // If the panel is open and the new ID contains a name slug (final ID), reload drafts
             if (isPanelVisible && id.matches(Regex("^(messenger|instagram|telegram)_(web|android)_-?\\d+_.+"))) {
                 loadDrafts()

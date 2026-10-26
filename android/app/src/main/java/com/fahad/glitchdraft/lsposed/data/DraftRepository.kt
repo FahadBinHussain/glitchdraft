@@ -421,6 +421,186 @@ class DraftRepository(private val context: Context) {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // People / cross-platform identity — one human across messenger, instagram,
+    // telegram, whatsapp and discord. Neon only: the people tables do not exist
+    // on firebase, so a firebase config must throw instead of silently linking.
+    // Mirror of extension/neonService.js people methods + backend/lib/people.ts.
+    // -------------------------------------------------------------------------
+
+    /** One thread the link picker offers. `score > 0` = name-similar suggestion. */
+    data class PersonCandidate(
+        val threadId: String,
+        val contactName: String?,
+        val platform: String,
+        val score: Int,
+        val preview: String,
+        val lastModified: Long
+    )
+
+    /** A thread that belongs to the person, with the drafts stored under it. */
+    data class PersonThread(
+        val threadId: String,
+        val contactName: String?,
+        val drafts: List<Draft>
+    )
+
+    /** Person linked to the requested chat: who they are + every identity they own. */
+    data class PersonInfo(
+        val id: String,
+        val displayName: String,
+        val threads: List<PersonThread>,
+        val candidates: List<PersonCandidate>
+    ) {
+        val threadIds: List<String> get() = threads.map { it.threadId }
+    }
+
+    /** One lookup: the person may be absent (nothing linked yet) while the
+     *  link picker still has every unlinked thread to offer. */
+    data class PersonLookup(
+        val person: PersonInfo?,
+        val candidates: List<PersonCandidate>
+    )
+
+    private fun requireNeon(): StorageConfig.Neon = when (val cfg = readConfig()) {
+        is StorageConfig.Neon -> cfg
+        is StorageConfig.Firebase -> throw IllegalStateException(
+            "People linking needs the Neon backend (active provider: firebase). " +
+                "Switch GlitchDraft to Neon — Firebase has no people tables."
+        )
+        null -> throw IllegalStateException(
+            "No storage config (provider + prefs both unavailable) — people lookup cannot run"
+        )
+    }
+
+    private fun peopleCall(
+        cfg: StorageConfig.Neon,
+        path: String,
+        method: String,
+        body: JSONObject? = null
+    ): JSONObject {
+        val conn = openNeonConnection(cfg, path, method)
+        if (body != null) {
+            conn.doOutput = true
+            OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
+        }
+        val status = conn.responseCode
+        val text = try { conn.inputStream.bufferedReader().readText() } catch (_: Throwable) { "" }
+        val serverMessage = runCatching { JSONObject(text).optString("message") }
+            .getOrNull()?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+        if (status != 200) {
+            throw IllegalStateException(
+                "people $method $path failed: HTTP $status" +
+                    (serverMessage?.let { " — $it" } ?: "")
+            )
+        }
+        if (text.isBlank()) throw IllegalStateException("people $method $path returned an empty body")
+        val json = JSONObject(text)
+        if (!json.optBoolean("success", false)) {
+            throw IllegalStateException(
+                "people $method $path rejected: ${serverMessage ?: "no reason given"}"
+            )
+        }
+        return json
+    }
+
+    /** GET /api/people?threadId=&name= — `person` is null when nothing is linked. */
+    suspend fun getPerson(chatId: String, name: String?): PersonLookup = withContext(Dispatchers.IO) {
+        val cfg = requireNeon()
+        val path = buildString {
+            append("/api/people?threadId=").append(encodeThreadId(chatId))
+            if (!name.isNullOrBlank()) append("&name=").append(encodeThreadId(name))
+        }
+        val json = peopleCall(cfg, path, "GET")
+        val person = json.optJSONObject("person")
+
+        val threads = mutableListOf<PersonThread>()
+        val personThreadIds = mutableListOf<String>()
+        val ids = person?.optJSONArray("threadIds")
+        if (ids != null) {
+            for (i in 0 until ids.length()) {
+                val id = ids.optString(i)
+                if (id.isNotBlank()) personThreadIds.add(id)
+            }
+        }
+
+        val draftsByThread = json.optJSONObject("drafts")
+        for (threadId in personThreadIds) {
+            val row = draftsByThread?.optJSONObject(threadId)
+            threads.add(
+                PersonThread(
+                    threadId = threadId,
+                    contactName = row?.optString("contactName")?.trim()
+                        ?.takeIf { it.isNotEmpty() && it != "null" },
+                    drafts = if (row == null) emptyList() else parseDraftMessagesFromNeon(row)
+                )
+            )
+        }
+
+        val candidates = mutableListOf<PersonCandidate>()
+        val candidateRows = json.optJSONArray("candidates")
+        if (candidateRows != null) {
+            for (i in 0 until candidateRows.length()) {
+                val item = candidateRows.optJSONObject(i) ?: continue
+                val threadId = item.optString("threadId")
+                if (threadId.isBlank()) continue
+                candidates.add(
+                    PersonCandidate(
+                        threadId = threadId,
+                        contactName = item.optString("contactName")?.trim()
+                            ?.takeIf { it.isNotEmpty() && it != "null" },
+                        platform = item.optString("platform"),
+                        score = item.optInt("score", 0),
+                        preview = item.optString("preview"),
+                        lastModified = item.optLong("lastModified", 0L)
+                    )
+                )
+            }
+        }
+
+        PersonLookup(
+            person = person?.let {
+                PersonInfo(
+                    id = it.optString("id"),
+                    displayName = it.optString("displayName"),
+                    threads = threads,
+                    candidates = candidates
+                )
+            },
+            candidates = candidates
+        )
+    }
+
+    /** POST /api/people — creates the person from this chat. returns the new id. */
+    suspend fun createPerson(chatId: String, displayName: String?): String =
+        withContext(Dispatchers.IO) {
+            val cfg = requireNeon()
+            val body = JSONObject().apply {
+                put("threadId", chatId)
+                if (!displayName.isNullOrBlank()) put("displayName", displayName.trim())
+            }
+            val json = peopleCall(cfg, "/api/people", "POST", body)
+            json.optJSONObject("person")?.optString("id").orEmpty()
+        }
+
+    /** POST /api/people/links — attach another platform identity to the person. */
+    suspend fun linkThread(personId: String, threadId: String) = withContext(Dispatchers.IO) {
+        val cfg = requireNeon()
+        val body = JSONObject().apply {
+            put("personId", personId)
+            put("threadId", threadId)
+        }
+        peopleCall(cfg, "/api/people/links", "POST", body)
+        Unit
+    }
+
+    /** DELETE /api/people/links?threadId= — drops the link, drafts stay saved. */
+    suspend fun unlinkThread(threadId: String) = withContext(Dispatchers.IO) {
+        val cfg = requireNeon()
+        peopleCall(cfg, "/api/people/links?threadId=${encodeThreadId(threadId)}", "DELETE")
+        Unit
+    }
+
     suspend fun getSettings(): JSONObject = withContext(Dispatchers.IO) {
         when (val cfg = readConfig()) {
             is StorageConfig.Neon -> {
