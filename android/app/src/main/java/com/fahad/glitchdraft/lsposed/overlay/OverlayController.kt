@@ -2083,6 +2083,10 @@ object OverlayController {
         sheet.setOnClickListener { if (it === sheet) closeLinkPicker() }
         sheet.visibility = View.VISIBLE
         personSheetScroll?.visibility = View.VISIBLE
+        // a reopened sheet must start at the top: the ScrollView keeps its old
+        // offset across removeAllViews(), which strands the "Link to …" header
+        // above the frame
+        personSheetScroll?.scrollTo(0, 0)
         bodyFrame?.bringChildToFront(personSheetScroll ?: sheet)
     }
 

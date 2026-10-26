@@ -510,12 +510,19 @@ button on `edge://extensions` is fallback.
   person"), the resolved id
   `messenger_android_1114975444834875_env103_section_1` in the header, and
   `+ link` opening `Link to Env103_section 1` with real candidate rows (MSGR/IG
-  badges, names, previews). **still open**: the picker sheet originally had no
-  scroller, so 12 candidates pushed `Cancel` out of the frame — fixed by
-  wrapping `personSheet` in a fill-viewport `ScrollView`
-  (`personSheetScroll`), built and installed but not yet re-dumped. also
-  untested on-device: the linked state (chips + merged rows) and `×` unlink,
-  which need a real link created from the panel.
+  badges, names, previews). two panel bugs found by dumping and fixed:
+  (1) the picker sheet had no scroller — 12 candidates pushed `Cancel` below the
+  frame, now wrapped in a fill-viewport `ScrollView` (`personSheetScroll`), and
+  a swipe reaches `Cancel` [77,1679][913,1767] as expected; (2) the ScrollView
+  keeps its old offset across `removeAllViews()`, so a reopened sheet started
+  mid-list with the "Link to …" header stranded above the frame — now
+  `scrollTo(0,0)` on open. `Cancel` closes the sheet and `✕` closes the panel,
+  both verified by dump. **still open**: the linked state on the phone (person
+  head, per-platform chips with `×`, merged copy-only rows) and `×` unlink —
+  the tap to create the link was interrupted when the phone switched apps, and
+  the device is in active use, so it needs a quiet minute. while the panel is
+  open `uiautomator dump` returns ONLY the overlay window (a few KB), so panel
+  state = `Type a draft` present; with it closed the dump is Messenger's window.
 
 ## driving real edge for extension tests
 
