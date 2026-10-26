@@ -502,12 +502,20 @@ button on `edge://extensions` is fallback.
   `browser-use` with `BU_CDP_WS`): empty state paints, picker lists 12
   candidates, link merges a foreign draft as a copy-only card, chip `×` unlinks,
   and the test person was deleted afterwards (`GET /api/people` → `[]`).
-  **android: compiled + release-built + installed (1.4.0) but NOT yet exercised
-  on the phone** — the device dropped off adb before the on-device run. the
-  phone run still needs: `appops set com.facebook.orca SYSTEM_ALERT_WINDOW
-  allow`, `am force-stop com.facebook.orca` (a fresh install is only loaded on
-  the next app start), open a chat, tap the toggle, then `uiautomator dump`
-  should show `Link this chat to the same person elsewhere` / `+ link`.
+  **android exercised on the phone (device 21091116UI) 2026-10-26**: with the
+  module reloaded (`am force-stop com.facebook.orca` after `adb install -r`),
+  tapping the toggle at screen (1008,165) opened the panel and `uiautomator
+  dump` showed the strip's empty state (`Link this chat to the same person
+  elsewhere` + `+ link`, content-desc "Link another platform identity to this
+  person"), the resolved id
+  `messenger_android_1114975444834875_env103_section_1` in the header, and
+  `+ link` opening `Link to Env103_section 1` with real candidate rows (MSGR/IG
+  badges, names, previews). **still open**: the picker sheet originally had no
+  scroller, so 12 candidates pushed `Cancel` out of the frame — fixed by
+  wrapping `personSheet` in a fill-viewport `ScrollView`
+  (`personSheetScroll`), built and installed but not yet re-dumped. also
+  untested on-device: the linked state (chips + merged rows) and `×` unlink,
+  which need a real link created from the panel.
 
 ## driving real edge for extension tests
 

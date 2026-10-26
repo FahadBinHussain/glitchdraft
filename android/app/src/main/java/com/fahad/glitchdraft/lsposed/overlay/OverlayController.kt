@@ -154,7 +154,8 @@ object OverlayController {
     // chips. a chip × unlinks that identity (drafts stay saved) and the current
     // chat's own chip is never unlinkable — the strip is anchored on it.
     private var personStrip: LinearLayout? = null
-    private var personSheet: LinearLayout? = null   // link picker, covers the list
+    private var personSheet: LinearLayout? = null   // link picker body, covers the list
+    private var personSheetScroll: ScrollView? = null // wraps it — 12 candidates overflow
     private var bodyFrame: FrameLayout? = null
     private var currentPerson: DraftRepository.PersonInfo? = null
     private var personCandidates: List<DraftRepository.PersonCandidate> = emptyList()
@@ -547,7 +548,18 @@ object OverlayController {
             setBackgroundColor(WHITE)
             visibility = View.GONE
         }
-        frame.addView(personSheet, FrameLayout.LayoutParams(
+        // the picker list has to scroll: 12 candidates plus head and Cancel do
+        // not fit the 320dp panel, and an unscrollable sheet strands Cancel
+        val sheetScroll = ScrollView(ctx).apply {
+            isFillViewport = true
+            visibility = View.GONE
+        }
+        personSheetScroll = sheetScroll
+        sheetScroll.addView(personSheet, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        frame.addView(sheetScroll, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
@@ -2070,7 +2082,8 @@ object OverlayController {
         // tapping the backdrop (not a row) closes the sheet
         sheet.setOnClickListener { if (it === sheet) closeLinkPicker() }
         sheet.visibility = View.VISIBLE
-        bodyFrame?.bringChildToFront(sheet)
+        personSheetScroll?.visibility = View.VISIBLE
+        bodyFrame?.bringChildToFront(personSheetScroll ?: sheet)
     }
 
     private fun makeCandidateRow(
@@ -2137,6 +2150,7 @@ object OverlayController {
     }
 
     private fun closeLinkPicker() {
+        personSheetScroll?.visibility = View.GONE
         personSheet?.visibility = View.GONE
     }
 
