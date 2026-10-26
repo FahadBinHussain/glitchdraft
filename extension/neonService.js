@@ -166,6 +166,34 @@ class NeonService {
         return data.drafts || {};
     }
 
+    // Person grouping (one human, many platform threads). Neon-only: the
+    // people/person_links tables live in the same database as the drafts.
+    async getPerson(threadId, name) {
+        const query = new URLSearchParams({ threadId });
+        if (name) query.set("name", name);
+        return this.request(`/api/people?${query.toString()}`, { method: "GET" });
+    }
+
+    async createPerson(threadId, displayName) {
+        return this.request("/api/people", {
+            method: "POST",
+            body: JSON.stringify({ threadId, displayName })
+        });
+    }
+
+    async linkThread(personId, threadId) {
+        return this.request("/api/people/links", {
+            method: "POST",
+            body: JSON.stringify({ personId, threadId })
+        });
+    }
+
+    async unlinkThread(threadId) {
+        return this.request(`/api/people/links?threadId=${encodeURIComponent(threadId)}`, {
+            method: "DELETE"
+        });
+    }
+
     async findDocByNumericId(numericId) {
         try {
             return await this.findDocByMessengerNumericId(numericId);

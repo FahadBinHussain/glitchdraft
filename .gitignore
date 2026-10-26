@@ -54,3 +54,6 @@ backend/.vercel/
 extension/glitchdraft_export_1773331874468.json
 .vercel
 .env*
+
+# typescript incremental build cache
+*.tsbuildinfo

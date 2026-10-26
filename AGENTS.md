@@ -432,6 +432,76 @@ button on `edge://extensions` is fallback.
   (ChatActivity + int chatId still exist there), but the enter-view anchor is
   the only path exercised so far.
 
+## people / cross-platform identity (added 2026-10-26)
+
+- tables `people` + `person_links` (`backend/drizzle/schema.ts`, migration
+  `0001_funny_night_thrasher.sql`). `person_links.thread_id` is the PK, so a
+  thread belongs to at most **one** person; `on delete cascade` from `people`.
+- api: `GET /api/people` (all people + thread ids), `GET
+  /api/people?threadId=&name=` (person + their drafts + suggestions +
+  candidates), `POST /api/people` (create from a thread), `DELETE
+  /api/people?id=`, `POST /api/people/links`, `DELETE
+  /api/people/links?threadId=`. all behind `isAuthorized` (x-api-key).
+- linking is **manual + confirmed**. a name match is only a suggestion
+  (`scoreSlug`: 100 exact, 70 substring, ≤60 shared tokens) — never written on
+  its own, because names collide across platforms and a wrong merge would show
+  someone else's drafts. the picker returns *every* unlinked thread with the
+  scored ones pinned on top, so links still work when the names differ wildly.
+- picker candidates exclude rooms, not people: telegram group/channel dialogs
+  (negative ids) and discord guild channels `discord_<guildId>_<channelId>`. only
+  `discord_com_channels__me_<id>` (DMs) count. unknown platforms are skipped
+  too — a draft saved on `www.example.com/register.php` is not an identity.
+- people features are **Neon only**; `requireNeonService()` in `background.js`
+  throws loudly on the firebase provider instead of pretending the link worked.
+- panel strip: hidden until the lookup answers, `+ link` empty state, person
+  head + per-platform chips (counts, click to filter), `×` on a chip unlinks
+  that identity (drafts stay saved, and the current chat's own chip is never
+  unlinkable — the strip is anchored on it). foreign rows render with a platform
+  badge and **Copy only**: Use/Edit/Delete address a row in *this* chat's thread.
+- id stability gotcha: an id is `<platform>_<web|android>_<numeric>_<slug>` and
+  the slug rides on the live display name, which Messenger renders a beat after
+  the url settles. so `getCurrentChatId()` legitimately returns a *different*
+  id for the same chat mid-load (`..._2637078310061988` vs
+  `..._2637078310061988_conversation_titled_jarvis`), and the strict
+  `!==` load guard silently dropped the reply — the panel looked dead after a
+  link. `threadKey()` (id minus the trailing slug) now drives every identity
+  comparison (load guard, person-lookup guard, "is this row foreign"). writes
+  stay gated on the **exact** id (`idStable`) — see the load-race guard notes
+  below; never relax that half.
+- discord guild channels are labeled `(30) Discord`-style (unread count), so
+  they were never linkable people anyway — the backend filter is what removed
+  them, not the label.
+- verified 2026-10-26 in real Edge: fresh load paints the strip, picker lists 12
+  clean candidates, link merges WA drafts into the messenger panel with Copy-only
+  cards, chip `×` unlinks and the merged list drops back. person lookups run
+  after the draft fetch, so a link/unlink needs ~5-10s to repaint.
+- cleanup after a manual test: `DELETE /api/people?id=<personId>` (no UI for it
+  yet) or delete the `person_links` + `people` rows — an unlinked person row is
+  invisible in the panel but still lists in `GET /api/people`.
+
+## driving real edge for extension tests
+
+- rule 23 of the global notes: browser-use against the real Edge, single method.
+  Edge's remote debugging does **not** need `--remote-debugging-port=9222` and
+  Edge does **not** need to be restarted/closed: once "Allow remote debugging"
+  has been accepted from `edge://inspect`, `Local State` keeps
+  `devtools.remote_debugging.user-enabled = true` and the browser listens on a
+  **dynamic** port. read it from
+  `%LOCALAPPDATA%\Microsoft\Edge\User Data\DevToolsActivePort` (line 1 = port,
+  line 2 = `/devtools/browser/<uuid>`).
+- that port serves only the **websocket** endpoint — `/json/version` and
+  `/json/list` return 404, so a plain `http://127.0.0.1:<port>` health check
+  lies. pass the ws url instead:
+  `BU_CDP_WS=ws://127.0.0.1:<port>/devtools/browser/<uuid> browser-use`.
+- the native `Allow remote debugging?` dialog is clicked by
+  `automata-private/microsoft.com/edge/remote-debug-allow.ps1` (UIAutomation
+  watcher, log `C:\tmp\yt33\remote-debug-allow.log`, verify by its process
+  command line — the pid file goes stale).
+- `browser-use` prefixes the tab title with a horse unless `BH_TAB_MARKER=0`.
+  that marker lands in `document.title`, and Messenger's name fallback reads the
+  title — so the slug becomes `_messenger`. harmless now that `threadKey`
+  ignores the slug, but don't trust a title-derived name during automation.
+
 ## known issues
 
 - fixed: `handleChatChange()` called `loadDraftsFromCloud()`, which existed nowhere —

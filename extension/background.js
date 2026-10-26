@@ -87,6 +87,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         handleGetSettings().then(sendResponse);
         return true;
     }
+    if (request.action === "getPerson") {
+        handleGetPerson(request.chatId, request.name).then(sendResponse);
+        return true;
+    }
+    if (request.action === "createPerson") {
+        handleCreatePerson(request.chatId, request.displayName).then(sendResponse);
+        return true;
+    }
+    if (request.action === "linkThread") {
+        handleLinkThread(request.personId, request.chatId).then(sendResponse);
+        return true;
+    }
+    if (request.action === "unlinkThread") {
+        handleUnlinkThread(request.chatId).then(sendResponse);
+        return true;
+    }
 });
 
 async function handleGetStatus() {
@@ -217,6 +233,58 @@ async function handleRename(fromId, toId, messages, contactName) {
         const { service } = await getService();
         await service.renameDraft(fromId, toId, messages, contactName);
         return { success: true };
+    } catch (error) {
+        return { success: false, message: error.message };
+    }
+}
+
+// People grouping is a Neon feature. Fail loudly on firebase instead of
+// pretending the link worked (no people tables exist there).
+async function requireNeonService() {
+    const { provider, service } = await getService();
+    if (provider !== "neon") {
+        throw new Error(
+            `People linking needs the Neon backend (active provider: ${provider}). ` +
+            "Switch the extension to Neon in settings - Firebase has no people tables."
+        );
+    }
+    return service;
+}
+
+async function handleGetPerson(chatId, name) {
+    try {
+        const service = await requireNeonService();
+        return { success: true, ...(await service.getPerson(chatId, name)) };
+    } catch (error) {
+        return { success: false, message: error.message };
+    }
+}
+
+async function handleCreatePerson(chatId, displayName) {
+    try {
+        const service = await requireNeonService();
+        const result = await service.createPerson(chatId, displayName);
+        return { success: true, person: result.person, existing: !!result.existing };
+    } catch (error) {
+        return { success: false, message: error.message };
+    }
+}
+
+async function handleLinkThread(personId, chatId) {
+    try {
+        const service = await requireNeonService();
+        const result = await service.linkThread(personId, chatId);
+        return { success: true, person: result.person };
+    } catch (error) {
+        return { success: false, message: error.message };
+    }
+}
+
+async function handleUnlinkThread(chatId) {
+    try {
+        const service = await requireNeonService();
+        const result = await service.unlinkThread(chatId);
+        return { success: true, removed: !!result.removed };
     } catch (error) {
         return { success: false, message: error.message };
     }

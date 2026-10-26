@@ -349,6 +349,274 @@
         cursor: not-allowed;
     }
 
+    /* --- person strip: one human across platforms --- */
+    .saved-messages-person {
+        padding: 7px 12px 8px;
+        background-color: var(--bg-secondary);
+        border-bottom: 1px solid var(--border);
+    }
+
+    .gd-person-head {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        min-width: 0;
+    }
+
+    .gd-person-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .gd-person-meta {
+        margin-left: auto;
+        font-size: 10px;
+        color: var(--text-secondary);
+        white-space: nowrap;
+    }
+
+    .gd-person-chips {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px;
+        margin-top: 6px;
+    }
+
+    .gd-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        padding: 2px 8px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background-color: var(--bg-primary);
+        color: var(--text-secondary);
+        font-size: 10px;
+        line-height: 1.5;
+        cursor: pointer;
+        user-select: none;
+        transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+    }
+
+    .gd-chip:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+    }
+
+    .gd-chip.active {
+        background-color: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+    }
+
+    .gd-chip-x {
+        font-size: 11px;
+        line-height: 1;
+        padding: 0 1px;
+        border-radius: 50%;
+        opacity: 0.6;
+    }
+
+    .gd-chip-x:hover {
+        opacity: 1;
+        background-color: rgba(0, 0, 0, 0.12);
+    }
+
+    .gd-person-link {
+        margin-left: auto;
+        border: none;
+        background: transparent;
+        color: var(--accent);
+        font-size: 10px;
+        padding: 2px 4px;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+
+    .gd-person-link:hover {
+        text-decoration: underline;
+    }
+
+    .gd-person-empty {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--text-secondary);
+    }
+
+    .gd-person-error {
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--danger);
+        word-break: break-word;
+    }
+
+    .saved-messages-item.gd-foreign {
+        border-left: 3px solid var(--accent);
+    }
+
+    .gd-card-source {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 4px;
+        font-size: 9px;
+        letter-spacing: 0.3px;
+        color: var(--text-secondary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .gd-platform-badge {
+        padding: 1px 5px;
+        border-radius: 3px;
+        background-color: var(--bg-tertiary);
+        color: var(--text-primary);
+        font-weight: 700;
+    }
+
+    .gd-person-sheet {
+        position: absolute;
+        inset: 0;
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        background-color: rgba(0, 0, 0, 0.35);
+    }
+
+    .gd-sheet-card {
+        display: flex;
+        flex-direction: column;
+        max-height: 82%;
+        background-color: var(--bg-primary);
+        border-radius: 12px 12px 0 0;
+        box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.25);
+        overflow: hidden;
+    }
+
+    .gd-sheet-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .gd-sheet-close {
+        margin-left: auto;
+        font-size: 16px;
+        line-height: 1;
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+
+    .gd-sheet-close:hover {
+        color: var(--text-primary);
+    }
+
+    .gd-sheet-sub {
+        padding: 7px 8px 4px;
+        font-size: 10px;
+        color: var(--text-secondary);
+    }
+
+    .gd-sheet-list {
+        overflow-y: auto;
+        padding: 0 6px 8px;
+    }
+
+    .gd-cand {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 7px 6px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background-color 0.15s ease;
+    }
+
+    .gd-cand:hover {
+        background-color: var(--bg-secondary);
+    }
+
+    .gd-cand-badge {
+        min-width: 34px;
+        padding: 2px 5px;
+        border-radius: 4px;
+        background-color: var(--bg-tertiary);
+        color: var(--text-primary);
+        font-size: 9px;
+        font-weight: 700;
+        text-align: center;
+    }
+
+    .gd-cand-main {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .gd-cand-name {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--text-primary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .gd-cand-preview {
+        font-size: 10px;
+        color: var(--text-secondary);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .gd-cand-hint {
+        align-self: center;
+        font-size: 9px;
+        color: var(--accent);
+        white-space: nowrap;
+    }
+
+    .gd-sheet-more {
+        display: block;
+        width: calc(100% - 12px);
+        margin: 2px 6px 8px;
+        padding: 6px;
+        border: 1px dashed var(--border);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--text-secondary);
+        font-size: 10px;
+        cursor: pointer;
+    }
+
+    .gd-sheet-more:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+    }
+
+    .gd-sheet-error {
+        padding: 10px 8px;
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--danger);
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
     .hidden {
         display: none;
     }
@@ -1177,6 +1445,11 @@
         syncStatusSection.appendChild(syncStatusText);
         syncStatusSection.appendChild(syncInfoText);
 
+        // Person strip: one human across platforms (hidden until a link exists)
+        const personStrip = document.createElement('div');
+        personStrip.className = 'saved-messages-person hidden';
+        personStrip.dataset.savedMessageUiElement = 'true';
+
         // Create body
         const body = document.createElement('div');
         body.className = 'saved-messages-body';
@@ -1206,6 +1479,7 @@
         container.appendChild(header);
         container.appendChild(menu);
         container.appendChild(syncStatusSection);
+        container.appendChild(personStrip);
         container.appendChild(body);
         container.appendChild(inputArea);
         document.body.appendChild(container);
@@ -1246,7 +1520,8 @@
             container,
             body,
             textarea,
-            toggleButton
+            toggleButton,
+            personStrip
         };
     }
 
@@ -2110,10 +2385,533 @@
     }
 
     // Function to load saved messages for current chat
+    // --- person grouping (one human, many platform threads) -------------
+    // A thread is one app + one id. A person is the human behind several
+    // threads. Links are manual + confirmed; the strip only shows what the
+    // backend already stored, never a guessed merge.
+    const PLATFORM_LABELS = {
+        messenger: 'MSGR',
+        instagram: 'IG',
+        telegram: 'TG',
+        whatsapp: 'WA',
+        discord: 'DC'
+    };
+    let currentPerson = null;
+    let personDrafts = {};      // threadId -> { messages, contactName, lastModified }
+    let personCandidates = [];  // every unlinked thread, score-ranked
+    let personFilter = 'all';   // 'all' | platform key
+    let personLookupError = null;
+    let personCache = null;     // { chatId, at, person, drafts, candidates }
+
+    function platformOfThreadId(threadId) {
+        return String(threadId || '').split('_')[0] || 'unknown';
+    }
+
+    // A thread id is <platform>_<web|android>_<numeric>[_<name-slug>]. The slug
+    // rides on the live display name, which can show up a beat after the id is
+    // first read - so the same conversation legitimately changes id mid-load.
+    // Identity comparisons ("is this still the chat I loaded?") must ignore the
+    // slug, or a late-appearing name silently drops the reply and the panel
+    // never repaints.
+    function threadKey(threadId) {
+        const parts = String(threadId || '').split('_');
+        const platform = parts[0];
+        if (
+            (platform === 'messenger' || platform === 'instagram' || platform === 'telegram') &&
+            (parts[1] === 'web' || parts[1] === 'android') &&
+            /^-?\d+$/.test(parts[2] || '')
+        ) {
+            return `${platform}_${parts[1]}_${parts[2]}`;
+        }
+        return String(threadId || '');
+    }
+
+    function platformLabel(platform) {
+        return PLATFORM_LABELS[platform] || String(platform || '?').toUpperCase().slice(0, 4);
+    }
+
+    function invalidatePersonCache() {
+        personCache = null;
+    }
+
+    function loadPerson(chatId, callback) {
+        if (personCache && personCache.chatId === chatId && Date.now() - personCache.at < 60000) {
+            callback(personCache);
+            return;
+        }
+        chrome.runtime.sendMessage(
+            { action: 'getPerson', chatId: chatId, name: getCurrentChatName() },
+            (response) => {
+                // same load-race rule as the draft GET: a stale reply for a
+                // previous chat must never repaint the panel
+                if (threadKey(getCurrentChatId()) !== threadKey(chatId)) return;
+                if (!response || !response.success) {
+                    // do not cache failures - the next tick should retry
+                    callback({
+                        chatId: chatId,
+                        at: Date.now(),
+                        person: null,
+                        drafts: {},
+                        candidates: [],
+                        error: (response && response.message) || 'people lookup failed'
+                    });
+                    return;
+                }
+                personCache = {
+                    chatId: chatId,
+                    at: Date.now(),
+                    person: response.person || null,
+                    drafts: response.drafts || {},
+                    candidates: response.candidates || [],
+                    error: null
+                };
+                callback(personCache);
+            }
+        );
+    }
+
+    function renderPersonStrip() {
+        const strip = ui.personStrip;
+        if (!strip) return;
+        strip.innerHTML = '';
+
+        if (personLookupError) {
+            const err = document.createElement('div');
+            err.className = 'gd-person-error';
+            err.textContent = 'People lookup failed: ' + personLookupError;
+            strip.appendChild(err);
+            strip.classList.remove('hidden');
+            return;
+        }
+
+        const threadIds = (currentPerson && currentPerson.threadIds) || [];
+
+        if (!currentPerson || threadIds.length === 0) {
+            const row = document.createElement('div');
+            row.className = 'gd-person-empty';
+            const text = document.createElement('span');
+            text.textContent = 'Link this chat to the same person elsewhere';
+            const linkButton = document.createElement('button');
+            linkButton.className = 'gd-person-link';
+            linkButton.textContent = '+ link';
+            linkButton.title = 'Group this chat with the same person on another platform';
+            linkButton.onclick = openLinkPicker;
+            row.appendChild(text);
+            row.appendChild(linkButton);
+            strip.appendChild(row);
+            strip.classList.remove('hidden');
+            return;
+        }
+
+        const totalDrafts = threadIds.reduce(
+            (sum, threadId) => sum + ((personDrafts[threadId] && personDrafts[threadId].messages) || []).length,
+            0
+        );
+        const platforms = [...new Set(threadIds.map(platformOfThreadId))];
+
+        const head = document.createElement('div');
+        head.className = 'gd-person-head';
+        const name = document.createElement('div');
+        name.className = 'gd-person-name';
+        name.textContent = currentPerson.displayName;
+        name.title = 'Person: ' + currentPerson.displayName;
+        const meta = document.createElement('div');
+        meta.className = 'gd-person-meta';
+        meta.textContent = `${totalDrafts} draft${totalDrafts === 1 ? '' : 's'} · ${platforms.length} app${platforms.length === 1 ? '' : 's'}`;
+        head.appendChild(name);
+        head.appendChild(meta);
+        strip.appendChild(head);
+
+        const chips = document.createElement('div');
+        chips.className = 'gd-person-chips';
+
+        const makeChip = (label, count, key, unlinkThreadId) => {
+            const chip = document.createElement('span');
+            chip.className = 'gd-chip' + (personFilter === key ? ' active' : '');
+            chip.title = unlinkThreadId
+                ? `Filter ${label} - × unlinks ${unlinkThreadId}`
+                : `Filter ${label}`;
+            const labelSpan = document.createElement('span');
+            labelSpan.textContent = `${label} ${count}`;
+            chip.appendChild(labelSpan);
+            chip.onclick = (event) => {
+                if (unlinkThreadId && event.target.classList.contains('gd-chip-x')) return;
+                personFilter = personFilter === key ? 'all' : key;
+                renderPersonStrip();
+                renderDraftView(getCurrentChatId());
+            };
+            if (unlinkThreadId) {
+                const x = document.createElement('span');
+                x.className = 'gd-chip-x';
+                x.textContent = '×';
+                x.title = 'Unlink this platform identity (drafts stay saved)';
+                x.onclick = (event) => {
+                    event.stopPropagation();
+                    unlinkPersonThread(unlinkThreadId);
+                };
+                chip.appendChild(x);
+            }
+            chips.appendChild(chip);
+        };
+
+        makeChip('All', totalDrafts, 'all', null);
+        for (const platform of platforms) {
+            const ids = threadIds.filter((threadId) => platformOfThreadId(threadId) === platform);
+            const count = ids.reduce(
+                (sum, threadId) => sum + ((personDrafts[threadId] && personDrafts[threadId].messages) || []).length,
+                0
+            );
+            // the current chat's own chip is not unlinkable: the person strip
+            // is anchored on this thread, so it must keep at least one link
+            const foreign = ids.filter((threadId) => threadId !== getCurrentChatId());
+            makeChip(platformLabel(platform), count, platform, foreign.length > 0 ? foreign[0] : null);
+        }
+
+        const linkButton = document.createElement('button');
+        linkButton.className = 'gd-person-link';
+        linkButton.textContent = '+ link';
+        linkButton.title = 'Link another platform identity to this person';
+        linkButton.onclick = openLinkPicker;
+        chips.appendChild(linkButton);
+
+        strip.appendChild(chips);
+        strip.classList.remove('hidden');
+    }
+
+    function buildDraftCard(entry, options) {
+        const foreign = !!options.foreign;
+        const messageElement = document.createElement('div');
+        messageElement.className = 'saved-messages-item' + (foreign ? ' gd-foreign' : '');
+        messageElement.dataset.savedMessageUiElement = 'true';
+        if (foreign) {
+            messageElement.title = `From ${entry.threadId} - read-only here (Use/Edit/Delete belong to that chat)`;
+        }
+
+        if (foreign) {
+            const source = document.createElement('div');
+            source.className = 'gd-card-source';
+            const badge = document.createElement('span');
+            badge.className = 'gd-platform-badge';
+            badge.textContent = platformLabel(platformOfThreadId(entry.threadId));
+            const who = document.createElement('span');
+            who.textContent = entry.contactName || entry.threadId;
+            source.appendChild(badge);
+            source.appendChild(who);
+            messageElement.appendChild(source);
+        }
+
+        const messageText = document.createElement('div');
+        messageText.innerHTML = entry.message.html;
+        messageText.dataset.savedMessageUiElement = 'true';
+
+        const timestampDiv = document.createElement('div');
+        timestampDiv.className = 'saved-messages-timestamp';
+        timestampDiv.textContent = formatTimestamp(entry.message.timestamp);
+        timestampDiv.dataset.savedMessageUiElement = 'true';
+
+        let modifiedDiv = null;
+        if (entry.draftLastModified && entry.draftLastModified > entry.message.timestamp + 60000) {
+            modifiedDiv = document.createElement('div');
+            modifiedDiv.className = 'saved-messages-modified';
+            modifiedDiv.textContent = 'Modified: ' + formatTimestamp(entry.draftLastModified);
+            modifiedDiv.dataset.savedMessageUiElement = 'true';
+        }
+
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'saved-messages-actions';
+        actionsDiv.dataset.savedMessageUiElement = 'true';
+
+        // foreign rows: Copy only. "Use" would type into the wrong app, and
+        // Edit/Delete address a row in THIS chat's thread id.
+        if (!foreign) {
+            const useButton = document.createElement('button');
+            useButton.className = 'saved-message-use';
+            useButton.textContent = 'Use';
+            useButton.dataset.savedMessageUiElement = 'true';
+            useButton.onclick = () => useMessage(entry.message.html);
+            actionsDiv.appendChild(useButton);
+        }
+
+        const copyButton = document.createElement('button');
+        copyButton.className = 'saved-message-copy';
+        copyButton.textContent = 'Copy';
+        copyButton.style.backgroundColor = '#4CAF50';
+        copyButton.style.color = 'white';
+        copyButton.title = 'Copy to clipboard';
+        copyButton.dataset.savedMessageUiElement = 'true';
+        copyButton.onclick = () => copyToClipboard(entry.message.html, 'Message copied to clipboard! You can now paste it.');
+        actionsDiv.appendChild(copyButton);
+
+        if (!foreign) {
+            const editButton = document.createElement('button');
+            editButton.className = 'saved-message-edit';
+            editButton.textContent = 'Edit';
+            editButton.style.backgroundColor = '#2196F3';
+            editButton.style.color = 'white';
+            editButton.title = 'Edit message';
+            editButton.dataset.savedMessageUiElement = 'true';
+            editButton.onclick = () => editMessage(entry.message.timestamp, entry.message.html, messageElement);
+            actionsDiv.appendChild(editButton);
+
+            const deleteButton = document.createElement('button');
+            deleteButton.className = 'saved-message-delete';
+            deleteButton.textContent = 'Delete';
+            deleteButton.dataset.savedMessageUiElement = 'true';
+            deleteButton.onclick = () => deleteMessage(entry.message.timestamp);
+            actionsDiv.appendChild(deleteButton);
+        }
+
+        messageElement.appendChild(messageText);
+        messageElement.appendChild(timestampDiv);
+        if (modifiedDiv) messageElement.appendChild(modifiedDiv);
+        messageElement.appendChild(actionsDiv);
+        return messageElement;
+    }
+
+    function renderSingleChat(chatId, savedMessages, draftLastModified) {
+        if (savedMessages.length === 0) {
+            ui.body.innerHTML = '<p>No saved messages for this chat</p>';
+            return;
+        }
+        ui.body.innerHTML = '';
+        const sorted = [...savedMessages].sort((a, b) => b.timestamp - a.timestamp);
+        for (const message of sorted) {
+            ui.body.appendChild(buildDraftCard({
+                message: message,
+                threadId: chatId,
+                contactName: null,
+                draftLastModified: draftLastModified
+            }, { foreign: false }));
+        }
+    }
+
+    function renderMerged(chatId) {
+        const threadIds = (currentPerson && currentPerson.threadIds) || [];
+        const rows = [];
+        for (const threadId of threadIds) {
+            const platform = platformOfThreadId(threadId);
+            if (personFilter !== 'all' && platform !== personFilter) continue;
+            const draft = personDrafts[threadId] || { messages: [], contactName: null, lastModified: 0 };
+            for (const message of draft.messages || []) {
+                rows.push({
+                    message: message,
+                    threadId: threadId,
+                    contactName: draft.contactName || null,
+                    draftLastModified: draft.lastModified || 0,
+                    // the person's own row for this chat is not foreign even
+                    // when the name slug shifted since it was linked
+                    foreign: threadKey(threadId) !== threadKey(chatId)
+                });
+            }
+        }
+
+        if (rows.length === 0) {
+            const label = personFilter === 'all' ? '' : ` on ${platformLabel(personFilter)}`;
+            ui.body.innerHTML = `<p>No drafts${label} for ${currentPerson.displayName}</p>`;
+            return;
+        }
+
+        rows.sort((a, b) => (b.message.timestamp || 0) - (a.message.timestamp || 0));
+        ui.body.innerHTML = '';
+        for (const row of rows) {
+            ui.body.appendChild(buildDraftCard(row, { foreign: row.foreign }));
+        }
+    }
+
+    function renderDraftView(chatId) {
+        const own = chatId ? personDrafts[chatId] : null;
+        if (!own) {
+            ui.body.innerHTML = '<p>No saved messages for this chat</p>';
+            return;
+        }
+        if (currentPerson && (currentPerson.threadIds || []).length > 1) {
+            renderMerged(chatId);
+            return;
+        }
+        renderSingleChat(chatId, own.messages || [], own.lastModified || 0);
+    }
+
+    function unlinkPersonThread(threadId) {
+        chrome.runtime.sendMessage({ action: 'unlinkThread', chatId: threadId }, (response) => {
+            if (!response || !response.success) {
+                showNotification('Unlink failed: ' + ((response && response.message) || 'unknown error'));
+                return;
+            }
+            showNotification(`Unlinked ${platformLabel(platformOfThreadId(threadId))} - drafts are still saved`);
+            invalidatePersonCache();
+            personFilter = 'all';
+            loadSavedMessages();
+        });
+    }
+
+    function closeLinkPicker() {
+        const sheet = document.getElementById('gdPersonSheet');
+        if (sheet) sheet.remove();
+    }
+
+    function renderCandidateList(list, response) {
+        list.innerHTML = '';
+        const candidates = response.candidates || [];
+        const scored = candidates.filter((candidate) => candidate.score > 0);
+        const rest = candidates.filter((candidate) => candidate.score <= 0);
+
+        if (candidates.length === 0) {
+            list.innerHTML = '<div class="gd-sheet-sub">No other threads found. Save a draft in another app first.</div>';
+            return;
+        }
+
+        const addRow = (candidate, suggested) => {
+            const row = document.createElement('div');
+            row.className = 'gd-cand';
+            row.dataset.savedMessageUiElement = 'true';
+            row.title = candidate.threadId;
+
+            const badge = document.createElement('span');
+            badge.className = 'gd-cand-badge';
+            badge.textContent = platformLabel(candidate.platform);
+
+            const main = document.createElement('div');
+            main.className = 'gd-cand-main';
+            const name = document.createElement('div');
+            name.className = 'gd-cand-name';
+            name.textContent = candidate.contactName || candidate.threadId;
+            const preview = document.createElement('div');
+            preview.className = 'gd-cand-preview';
+            preview.textContent = candidate.preview || 'no text draft';
+            main.appendChild(name);
+            main.appendChild(preview);
+
+            row.appendChild(badge);
+            row.appendChild(main);
+
+            if (suggested) {
+                const hint = document.createElement('span');
+                hint.className = 'gd-cand-hint';
+                hint.textContent = candidate.score === 100 ? 'same name' : 'similar';
+                row.appendChild(hint);
+            }
+
+            row.onclick = () => linkCandidate(candidate.threadId);
+            list.appendChild(row);
+        };
+
+        if (scored.length > 0) {
+            const sub = document.createElement('div');
+            sub.className = 'gd-sheet-sub';
+            sub.textContent = 'Name matches - confirm only if it is the same person';
+            list.appendChild(sub);
+            scored.slice(0, 8).forEach((candidate) => addRow(candidate, true));
+        }
+
+        if (rest.length > 0) {
+            const more = document.createElement('button');
+            more.className = 'gd-sheet-more';
+            more.dataset.savedMessageUiElement = 'true';
+            let expanded = false;
+            more.textContent = `Show all ${rest.length} other thread${rest.length === 1 ? '' : 's'}`;
+            more.onclick = () => {
+                if (expanded) return;
+                expanded = true;
+                more.remove();
+                rest.forEach((candidate) => addRow(candidate, false));
+            };
+            list.appendChild(more);
+        }
+    }
+
+    function linkCandidate(threadId) {
+        const chatId = getCurrentChatId();
+        if (!chatId) return;
+
+        const linkToPerson = (person) => {
+            chrome.runtime.sendMessage({ action: 'linkThread', personId: person.id, chatId: threadId }, (response) => {
+                if (!response || !response.success) {
+                    showNotification('Link failed: ' + ((response && response.message) || 'unknown error'));
+                    return;
+                }
+                closeLinkPicker();
+                showNotification(`Linked ${platformLabel(platformOfThreadId(threadId))} to ${person.displayName}`);
+                invalidatePersonCache();
+                personFilter = 'all';
+                loadSavedMessages();
+            });
+        };
+
+        if (currentPerson) {
+            linkToPerson(currentPerson);
+            return;
+        }
+
+        const displayName = getCurrentChatName() || getDisplayNameFromChatId(chatId) || chatId;
+        chrome.runtime.sendMessage({ action: 'createPerson', chatId: chatId, displayName: displayName }, (response) => {
+            if (!response || !response.success) {
+                showNotification('Create person failed: ' + ((response && response.message) || 'unknown error'));
+                return;
+            }
+            linkToPerson(response.person);
+        });
+    }
+
+    function openLinkPicker() {
+        const chatId = getCurrentChatId();
+        if (!chatId) return;
+        closeLinkPicker();
+
+        const sheet = document.createElement('div');
+        sheet.className = 'gd-person-sheet';
+        sheet.id = 'gdPersonSheet';
+        sheet.dataset.savedMessageUiElement = 'true';
+
+        const card = document.createElement('div');
+        card.className = 'gd-sheet-card';
+        card.dataset.savedMessageUiElement = 'true';
+
+        const head = document.createElement('div');
+        head.className = 'gd-sheet-head';
+        head.textContent = 'Link to ' + (getCurrentChatName() || 'this chat');
+        const closeButton = document.createElement('span');
+        closeButton.className = 'gd-sheet-close';
+        closeButton.textContent = '×';
+        closeButton.onclick = closeLinkPicker;
+        head.appendChild(closeButton);
+
+        const list = document.createElement('div');
+        list.className = 'gd-sheet-list';
+        list.innerHTML = '<div class="gd-sheet-sub">Loading threads…</div>';
+
+        card.appendChild(head);
+        card.appendChild(list);
+        sheet.appendChild(card);
+        sheet.addEventListener('click', (event) => {
+            if (event.target === sheet) closeLinkPicker();
+        });
+        ui.container.appendChild(sheet);
+
+        chrome.runtime.sendMessage(
+            { action: 'getPerson', chatId: chatId, name: getCurrentChatName() },
+            (response) => {
+                if (!response || !response.success) {
+                    list.innerHTML = '';
+                    const err = document.createElement('div');
+                    err.className = 'gd-sheet-error';
+                    err.textContent = 'Could not load threads: ' + ((response && response.message) || 'unknown error');
+                    list.appendChild(err);
+                    return;
+                }
+                personCandidates = response.candidates || [];
+                renderCandidateList(list, response);
+            }
+        );
+    }
+
     function loadSavedMessages() {
         const chatId = getCurrentChatId();
         if (!chatId) {
             ui.body.innerHTML = '<p>Open a chat to see saved messages</p>';
+            currentPerson = null;
+            personDrafts = {};
+            personLookupError = null;
+            renderPersonStrip();
             return;
         }
 
@@ -2124,9 +2922,22 @@
             // name + a slug-picked row's messages under this id — that is what
             // mass-created the duplicate messenger_web_<fbid>_<other-slug> rows
             // (clone storm of 2026-10-06..15).
-            if (getCurrentChatId() !== chatId) {
+            const liveChatId = getCurrentChatId();
+            if (threadKey(liveChatId) !== threadKey(chatId)) {
                 console.log('GlitchDraft: chat changed during load - dropping stale response for ' + chatId);
                 return;
+            }
+            // Same conversation, but the id is not byte-identical: the name
+            // slug was captured before (or after) the header rendered, so the
+            // slug half of the id shifted mid-load. Rendering is safe - the
+            // numeric thread key is the same chat - but every WRITE below stays
+            // gated on an exactly stable id, because a stray rename/back-fill
+            // is what mass-created the duplicate rows on 2026-10-06..15.
+            const idStable = liveChatId === chatId;
+            if (!idStable) {
+                console.log(
+                    `GlitchDraft: id shifted by name slug during load (${chatId} -> ${liveChatId}) - rendering, skipping writes`
+                );
             }
             if (!response || !response.success) {
                 const msg = response?.message || 'Error loading messages';
@@ -2144,15 +2955,15 @@
                     </div>`;
                 return;
             }
-            
+
             const savedMessages = response.messages || [];
             const draftLastModified = Number(response.lastModified) || 0;
 
             // Lazy rename: if the doc was found under a legacy/no-slug ID, rename it to the correct chatId
-            lazyRenameIfNeeded(response, chatId);
+            if (idStable) lazyRenameIfNeeded(response, chatId);
 
             // Lazy back-fill: patch missing or noisy contactName values with the current clean display name.
-            if (response.exists && !response.needsRename) {
+            if (idStable && response.exists && !response.needsRename) {
                 const detectedName = getCurrentChatName();
                 const storedName = chatId.startsWith('messenger_')
                     ? cleanMessengerDisplayName(response.contactName)
@@ -2167,84 +2978,21 @@
                 }
             }
 
-            if (savedMessages.length === 0) {
-                ui.body.innerHTML = '<p>No saved messages for this chat</p>';
-                return;
-            }
-
-            ui.body.innerHTML = '';
-
-            // Sort messages by timestamp (newest first)
-            savedMessages.sort((a, b) => b.timestamp - a.timestamp);
-
-            // Render all messages
-            savedMessages.forEach((message, index) => {
-                const messageElement = document.createElement('div');
-                messageElement.className = 'saved-messages-item';
-                messageElement.dataset.savedMessageUiElement = 'true';
-
-                const messageText = document.createElement('div');
-                messageText.innerHTML = message.html;
-                messageText.dataset.savedMessageUiElement = 'true';
-
-                const timestampDiv = document.createElement('div');
-                timestampDiv.className = 'saved-messages-timestamp';
-                timestampDiv.textContent = formatTimestamp(message.timestamp);
-                timestampDiv.dataset.savedMessageUiElement = 'true';
-
-                let modifiedDiv = null;
-                if (draftLastModified && draftLastModified > message.timestamp + 60000) {
-                    modifiedDiv = document.createElement('div');
-                    modifiedDiv.className = 'saved-messages-modified';
-                    modifiedDiv.textContent = 'Modified: ' + formatTimestamp(draftLastModified);
-                    modifiedDiv.dataset.savedMessageUiElement = 'true';
-                }
-
-                const actionsDiv = document.createElement('div');
-                actionsDiv.className = 'saved-messages-actions';
-                actionsDiv.dataset.savedMessageUiElement = 'true';
-
-                const useButton = document.createElement('button');
-                useButton.className = 'saved-message-use';
-                useButton.textContent = 'Use';
-                useButton.dataset.savedMessageUiElement = 'true';
-                useButton.onclick = () => useMessage(message.html);
-
-                const copyButton = document.createElement('button');
-                copyButton.className = 'saved-message-copy';
-                copyButton.textContent = 'Copy';
-                copyButton.style.backgroundColor = '#4CAF50';
-                copyButton.style.color = 'white';
-                copyButton.title = 'Copy to clipboard';
-                copyButton.dataset.savedMessageUiElement = 'true';
-                copyButton.onclick = () => copyToClipboard(message.html, 'Message copied to clipboard! You can now paste it.');
-
-                const editButton = document.createElement('button');
-                editButton.className = 'saved-message-edit';
-                editButton.textContent = 'Edit';
-                editButton.style.backgroundColor = '#2196F3';
-                editButton.style.color = 'white';
-                editButton.title = 'Edit message';
-                editButton.dataset.savedMessageUiElement = 'true';
-                editButton.onclick = () => editMessage(message.timestamp, message.html, messageElement);
-
-                const deleteButton = document.createElement('button');
-                deleteButton.className = 'saved-message-delete';
-                deleteButton.textContent = 'Delete';
-                deleteButton.dataset.savedMessageUiElement = 'true';
-                deleteButton.onclick = () => deleteMessage(message.timestamp);
-
-                actionsDiv.appendChild(useButton);
-                actionsDiv.appendChild(copyButton);
-                actionsDiv.appendChild(editButton);
-                actionsDiv.appendChild(deleteButton);
-
-                messageElement.appendChild(messageText);
-                messageElement.appendChild(timestampDiv);
-                if (modifiedDiv) messageElement.appendChild(modifiedDiv);
-                messageElement.appendChild(actionsDiv);
-
-                ui.body.appendChild(messageElement);
+            loadPerson(chatId, (cache) => {
+                if (threadKey(getCurrentChatId()) !== threadKey(chatId)) return;
+                currentPerson = cache.person;
+                personDrafts = cache.drafts || {};
+                personCandidates = cache.candidates || [];
+                personLookupError = cache.error || null;
+                // the current chat's own row is always the freshest GET, not
+                // the 60s person cache
+                personDrafts[chatId] = {
+                    messages: savedMessages,
+                    contactName: getCurrentChatName() || response.contactName || null,
+                    lastModified: draftLastModified
+                };
+                renderPersonStrip();
+                renderDraftView(chatId);
             });
         });
     }
