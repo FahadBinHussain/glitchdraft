@@ -59,6 +59,7 @@ class GlitchDraftHook : IXposedHookLoadPackage {
             "com.whatsapp",
             "com.instagram.android",
             "org.telegram.messenger",
+            "xyz.nextalone.nagram",
             "com.android.chrome",
             "com.chrome.beta",
             "com.chrome.dev",
@@ -97,7 +98,9 @@ class GlitchDraftHook : IXposedHookLoadPackage {
         hookWebViewLoadUrl(lpparam)
         hookActivityForOverlay(lpparam)
         hookMessengerThreadNavigation(lpparam)
-        if (lpparam.packageName.startsWith("org.telegram")) {
+        if (lpparam.packageName.startsWith("org.telegram") ||
+            lpparam.packageName == "xyz.nextalone.nagram"
+        ) {
             hookTelegramChatNavigation(lpparam)
         }
     }
@@ -415,79 +418,144 @@ class GlitchDraftHook : IXposedHookLoadPackage {
     }
 
     // -------------------------------------------------------------------------
-    // Telegram: org.telegram.ui.ChatActivity is NOT an android Fragment — it
-    // extends Telegram's own BaseFragment and lives inside LaunchActivity, so
-    // the framework Fragment.onResume scan above never sees it. hook the chat
-    // fragment's own onResume and read the id/title from MessagesController
-    // (stable public API: getChat(id).title / getUser(id).first_name).
+    // Telegram + Nagram (Telegram fork, package xyz.nextalone.nagram).
+    //
+    // Anchor = org.telegram.ui.Components.ChatActivityEnterView, the composer
+    // every chat screen builds. That class name survives Nagram's R8 pass; the
+    // chat screen class itself does NOT (nagram renames ChatActivity to
+    // org.telegram.ui.uo in this build), so hooking "org.telegram.ui.ChatActivity"
+    // silently never installs. The composer constructor receives the chat
+    // screen object as one of its args, and that object carries
+    // `currentAccount` + `dialogId`.
+    //
+    // dialogId is the id space the web extension's url hash uses
+    // (user = +id, group = -id, channel = -100…), so native and web rows line
+    // up without the slug bridge. Nagram obfuscates field names (dialogId
+    // lands in `b6`), so the field is resolved by scanning long fields and
+    // validating against MessagesController; the field name is logged.
     // -------------------------------------------------------------------------
 
     private fun hookTelegramChatNavigation(lpparam: XC_LoadPackage.LoadPackageParam) {
         try {
-            val chatActivityClass = XposedHelpers.findClass(
-                "org.telegram.ui.ChatActivity", lpparam.classLoader
+            val enterViewClass = XposedHelpers.findClass(
+                "org.telegram.ui.Components.ChatActivityEnterView", lpparam.classLoader
             )
             val messagesControllerClass = XposedHelpers.findClass(
                 "org.telegram.messenger.MessagesController", lpparam.classLoader
             )
 
-            XposedHelpers.findAndHookMethod(
-                chatActivityClass,
-                "onResume",
-                object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        val frag = param.thisObject ?: return
-                        // small delay so the header + MessagesController state settle
-                        Handler(Looper.getMainLooper()).postDelayed({
-                            try {
-                                val chatIdInt = runCatching {
-                                    XposedHelpers.getIntField(frag, "chatId")
-                                }.getOrNull()
-                                val altId = runCatching {
-                                    XposedHelpers.getLongField(frag, "dialogId")
-                                }.getOrNull() ?: runCatching {
-                                    XposedHelpers.getLongField(frag, "did")
-                                }.getOrNull()
-                                XposedBridge.log("$TAG: TG ChatActivity resume chatId=$chatIdInt dialogId=$altId")
-                                if (chatIdInt == null || chatIdInt == 0) return@postDelayed
-
-                                val account = runCatching {
-                                    XposedHelpers.callMethod(frag, "getCurrentAccount") as Int
-                                }.getOrDefault(0)
-                                val mc = XposedHelpers.callStaticMethod(
-                                    messagesControllerClass, "getInstance", account
-                                )
-                                val chatObj = runCatching {
-                                    XposedHelpers.callMethod(mc, "getChat", chatIdInt)
-                                }.getOrNull()
-                                val userObj = if (chatObj == null) runCatching {
-                                    XposedHelpers.callMethod(mc, "getUser", chatIdInt)
-                                }.getOrNull() else null
-                                val title = runCatching {
-                                    XposedHelpers.getObjectField(chatObj, "title") as? String
-                                }.getOrNull() ?: runCatching {
-                                    val f = XposedHelpers.getObjectField(userObj, "first_name") as? String
-                                    val l = XposedHelpers.getObjectField(userObj, "last_name") as? String
-                                    listOfNotNull(f, l).joinToString(" ").takeIf { it.isNotBlank() }
-                                }.getOrNull()
-                                XposedBridge.log("$TAG: TG title='$title' chat=${chatObj?.javaClass?.simpleName} user=${userObj?.javaClass?.simpleName}")
-
-                                val id = normalizeToFirestoreId(chatIdInt.toString(), "telegram", title)
-                                XposedBridge.log("$TAG: TG chatId → $id")
-                                OverlayController.setChatId(id)
-                                OverlayController.setChatName(title)
-                            } catch (e: Throwable) {
-                                XposedBridge.log("$TAG: TG ChatActivity resume failed: $e")
-                            }
-                        }, 600)
+            XposedBridge.hookAllConstructors(enterViewClass, object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    // the chat screen is the only ctor arg that carries currentAccount
+                    val chatObj = param.args.firstOrNull { a ->
+                        a != null && a !is Activity && a !is Boolean && a !is android.content.Context &&
+                            findFieldOrNull(a.javaClass, "currentAccount") != null
+                    } ?: run {
+                        XposedBridge.log(
+                            "$TAG: ChatActivityEnterView ctor but no chat arg " +
+                                "(args=${param.args.joinToString { it?.javaClass?.name ?: "null" }})"
+                        )
+                        return
                     }
+
+                    // small delay so MessagesController has the chat cached
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        try {
+                            val account = XposedHelpers.getIntField(chatObj, "currentAccount")
+                            val mc = XposedHelpers.callStaticMethod(
+                                messagesControllerClass, "getInstance", account
+                            )
+                            val dialogId = resolveDialogId(chatObj, mc)
+                            if (dialogId == null) {
+                                XposedBridge.log("$TAG: TG chat open but no dialogId on ${chatObj.javaClass.name}")
+                                return@postDelayed
+                            }
+                            val title = resolveTelegramTitle(mc, dialogId)
+                            val id = normalizeToFirestoreId(dialogId.toString(), "telegram", title)
+                            XposedBridge.log("$TAG: TG chat dialogId=$dialogId title='$title' → $id")
+                            OverlayController.setChatId(id)
+                            OverlayController.setChatName(title)
+                        } catch (e: Throwable) {
+                            XposedBridge.log("$TAG: TG chat resolve failed: $e")
+                        }
+                    }, 600)
                 }
-            )
-            XposedBridge.log("$TAG: Hooked org.telegram.ui.ChatActivity.onResume")
+            })
+            XposedBridge.log("$TAG: Hooked ChatActivityEnterView ctors for ${lpparam.packageName}")
         } catch (e: Throwable) {
-            XposedBridge.log("$TAG: hookTelegramChatNavigation failed: $e")
+            XposedBridge.log("$TAG: hookTelegramChatNavigation failed for ${lpparam.packageName}: $e")
         }
     }
+
+    /**
+     * Walks the superclass chain: telegram keeps the fields we want on base
+     * classes (`currentAccount` lives on ActionBar.l2 / BaseFragment, NOT on
+     * the chat class), so a bare getDeclaredField silently misses them.
+     */
+    private fun findFieldOrNull(cls: Class<*>, name: String): java.lang.reflect.Field? {
+        var c: Class<*>? = cls
+        while (c != null) {
+            runCatching { c!!.getDeclaredField(name).apply { isAccessible = true } }
+                .getOrNull()?.let { return it }
+            c = c.superclass
+        }
+        return null
+    }
+
+    /** every declared field of the class and its superclasses (nearest first) */
+    private fun allFields(cls: Class<*>): List<java.lang.reflect.Field> {
+        val out = ArrayList<java.lang.reflect.Field>()
+        var c: Class<*>? = cls
+        while (c != null) {
+            out.addAll(c.declaredFields)
+            c = c.superclass
+        }
+        return out
+    }
+
+    /** Telegram dialog id: +userId, -chatId (groups), -100…-channelId (channels). */
+    private fun resolveDialogId(chatObj: Any, mc: Any): Long? {
+        findFieldOrNull(chatObj.javaClass, "dialogId")?.let { f ->
+            val v = runCatching { f.getLong(chatObj) }.getOrNull()
+            if (v != null && v != 0L) return v
+        }
+        for (f in allFields(chatObj.javaClass)) {
+            if (f.type != Long::class.javaPrimitiveType) continue
+            val v = runCatching { f.isAccessible = true; f.getLong(chatObj) }.getOrNull() ?: continue
+            if (v == 0L) continue
+            if (telegramPeerExists(mc, v)) {
+                XposedBridge.log("$TAG: TG dialogId from obfuscated field '${f.name}' = $v")
+                return v
+            }
+        }
+        return null
+    }
+
+    private fun telegramPeerExists(mc: Any, dialogId: Long): Boolean = try {
+        if (dialogId > 0) {
+            XposedHelpers.callMethod(mc, "getUser", dialogId) != null
+        } else {
+            XposedHelpers.callMethod(mc, "getChat", telegramChatId(dialogId)) != null
+        }
+    } catch (_: Throwable) { false }
+
+    /** -100…-channelId → channelId; -groupId → groupId. */
+    private fun telegramChatId(dialogId: Long): Long {
+        val peerId = -dialogId
+        return if (peerId > 1_000_000_000_000L) peerId - 1_000_000_000_000L else peerId
+    }
+
+    private fun resolveTelegramTitle(mc: Any, dialogId: Long): String? = try {
+        if (dialogId > 0) {
+            val user = XposedHelpers.callMethod(mc, "getUser", dialogId)
+            val f = XposedHelpers.getObjectField(user, "first_name") as? String
+            val l = XposedHelpers.getObjectField(user, "last_name") as? String
+            listOfNotNull(f, l).joinToString(" ").takeIf { it.isNotBlank() }
+        } else {
+            val chat = XposedHelpers.callMethod(mc, "getChat", telegramChatId(dialogId))
+            XposedHelpers.getObjectField(chat, "title") as? String
+        }
+    } catch (_: Throwable) { null }
 
     private fun extractFromFragmentArgs(args: android.os.Bundle?, pkg: String, fragName: String): String? {
         if (args == null || args.isEmpty) return null

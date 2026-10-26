@@ -2,6 +2,7 @@
 
 import android.content.Context
 import com.fahad.glitchdraft.lsposed.provider.ConfigProvider
+import com.fahad.glitchdraft.lsposed.provider.ModuleConfig
 import de.robv.android.xposed.XposedBridge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -35,38 +36,55 @@ class DraftRepository(private val context: Context) {
     }
 
     private fun readConfig(): StorageConfig? {
-        return try {
-            val cursor = context.contentResolver.query(
-                ConfigProvider.CONTENT_URI, null, null, null, null
-            ) ?: return null
+        val viaProvider = runCatching { readConfigFromProvider() }.getOrNull()
+        if (viaProvider != null) return viaProvider
 
-            cursor.use {
-                if (!it.moveToFirst()) return null
-
-                val neonBaseUrl = runCatching {
-                    val idx = it.getColumnIndexOrThrow(ConfigProvider.COL_NEON_API_BASE_URL)
-                    it.getString(idx)
-                }.getOrDefault("").orEmpty().trim().trimEnd('/')
-
-                val neonApiKey = runCatching {
-                    val idx = it.getColumnIndexOrThrow(ConfigProvider.COL_NEON_API_KEY)
-                    it.getString(idx)
-                }.getOrDefault("").orEmpty().trim()
-
-                if (neonBaseUrl.isNotBlank() && neonApiKey.isNotBlank()) {
-                    return StorageConfig.Neon(neonBaseUrl, neonApiKey)
-                }
-
-                val pid = it.getString(it.getColumnIndexOrThrow(ConfigProvider.COL_PROJECT_ID))
-                val key = it.getString(it.getColumnIndexOrThrow(ConfigProvider.COL_API_KEY))
-                if (pid.isNullOrBlank() || key.isNullOrBlank()) null
-                else StorageConfig.Firebase(pid, key)
-            }
-        } catch (_: Throwable) {
-            null
+        // provider unavailable - the target app can't see the module package
+        // (Android 11 package visibility). second method: config file in this
+        // app's own filesDir (tools/android-config.ps1 writes it as root).
+        if (ModuleConfig.load(context)) {
+            ModuleConfig.markActive(
+                "content://${ConfigProvider.AUTHORITY} not resolvable from this process"
+            )
+            val base = ModuleConfig.neonBaseUrl
+            val key = ModuleConfig.neonApiKey
+            if (base != null && key != null) return StorageConfig.Neon(base, key)
         }
+        XposedBridge.log(
+            "$TAG: NO CONFIG - provider unavailable and ${ModuleConfig.FILE_NAME} not readable; " +
+                "drafts cannot load or save in this app"
+        )
+        return null
     }
 
+    private fun readConfigFromProvider(): StorageConfig? {
+        val cursor = context.contentResolver.query(
+            ConfigProvider.CONTENT_URI, null, null, null, null
+        ) ?: return null
+
+        return cursor.use {
+            if (!it.moveToFirst()) return null
+
+            val neonBaseUrl = runCatching {
+                val idx = it.getColumnIndexOrThrow(ConfigProvider.COL_NEON_API_BASE_URL)
+                it.getString(idx)
+            }.getOrDefault("").orEmpty().trim().trimEnd('/')
+
+            val neonApiKey = runCatching {
+                val idx = it.getColumnIndexOrThrow(ConfigProvider.COL_NEON_API_KEY)
+                it.getString(idx)
+            }.getOrDefault("").orEmpty().trim()
+
+            if (neonBaseUrl.isNotBlank() && neonApiKey.isNotBlank()) {
+                return StorageConfig.Neon(neonBaseUrl, neonApiKey)
+            }
+
+            val pid = it.getString(it.getColumnIndexOrThrow(ConfigProvider.COL_PROJECT_ID))
+            val key = it.getString(it.getColumnIndexOrThrow(ConfigProvider.COL_API_KEY))
+            if (pid.isNullOrBlank() || key.isNullOrBlank()) null
+            else StorageConfig.Firebase(pid, key)
+        }
+    }
     private fun docUrl(firebase: StorageConfig.Firebase, path: String): String {
         return "$FS_BASE/${firebase.projectId}/databases/(default)/documents/$path?key=${firebase.apiKey}"
     }
@@ -290,7 +308,9 @@ class DraftRepository(private val context: Context) {
                 val row = resolveMessengerRowFirebase(cfg, chatId)
                 writeDraftDocFirebase(cfg, row?.id ?: chatId, messages)
             }
-            null -> Unit
+            null -> XposedBridge.log(
+                "$TAG: save FAILED for $chatId — no storage config (provider + prefs both unavailable)"
+            )
         }
     }
 

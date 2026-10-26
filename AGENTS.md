@@ -25,6 +25,23 @@ button on `edge://extensions` is fallback.
 
 ## android / lsposed module
 
+- **config channel for apps that can't see the module** (added 2026-10-26):
+  `ConfigProvider` (`content://com.fahad.glitchdraft.lsposed.config/firebase`)
+  is invisible to any app without a `<queries>` entry for us - android 11
+  package visibility filters provider resolution, so nagram's
+  `contentResolver.query()` returns null and its panel silently dropped saves
+  (`readConfig()` → null). messenger is fine (it declares broad visibility).
+  second method, used only when the provider fails: `provider/ModuleConfig.kt`
+  reads `<target>/files/glitchdraft_config.json` from the target's OWN filesDir,
+  pushed as root by `pwsh tools/android-config.ps1` (`pnpm android:config`).
+  re-run it after changing the config in the module app. the switch is loud:
+  log `config source = injected file (2nd method) - provider unavailable: …`
+  plus a ` [file]` marker at the end of the panel header. dead ends, don't
+  retry: XSharedPreferences (module data dir is 0700 and vector's framework has
+  no `getPrefsPath` prefs mirror → `keys=[]`), `IXposedHookZygoteInit` (vector
+  never calls it for legacy modules), and `su 0 <cmd>` (this su build ignores
+  it: exit 0, no output - use `su -c '<one command>'`, and a pushed script for
+  anything with pipes/redirects because opencode's pwsh re-splits argv).
 - build from repo root: `npm run android:run` (assembleDebug + install + launch
   MainActivity), `android:build:release`, `android:release:apk`. all three go
   through `tools/android.ps1`, which picks a JDK 21 (app/build.gradle pins
@@ -342,11 +359,11 @@ button on `edge://extensions` is fallback.
   the mAttrs y + 80 (status bar): saved `togPos=940,17` renders at
   `[940,97][1077,234]`, so tap (1008,165), not (1008,85).
 
-## telegram (added 2026-10-16 — verification pending)
+## telegram + nagram (added 2026-10-16, nagram 2026-10-26)
 
-- code-complete on both surfaces but nothing has been verified against a live
-  telegram session yet — don't treat any of it as proven until the verify steps
-  at the bottom pass.
+- **nagram is the target client** (`xyz.nextalone.nagram`) — the user does not
+  use plain telegram. `org.telegram.messenger` stays in `TARGET_PACKAGES` but is
+  unverified; don't assume a hook proven on nagram works there.
 - web (extension only): config.js `SUPPORTED_SITES` + background `onInstalled`
   reload pattern + manifest host_permissions `https://web.telegram.org/*`
   (extension 1.3.0). chat key comes from the url hash: `#123…` (user),
@@ -355,23 +372,65 @@ button on `edge://extensions` is fallback.
   id = `telegram_web_<key>_<slug>`, name via `.chat-info .chat-title` /
   `.title-wrapper .title` selectors (k + a web versions); a chatless
   web.telegram.org returns null and never falls through to the url sanitizer.
-- native android: `GlitchDraftHook.hookTelegramChatNavigation` — tg's
-  ChatActivity is NOT an android Fragment (extends tg's own BaseFragment inside
-  LaunchActivity), so the generic fragment scan never sees it: hooks
-  `org.telegram.ui.ChatActivity.onResume`, reads the `chatId` field +
-  `MessagesController.getInstance(account).getChat/getUser` after a 600ms
-  settle. id = `telegram_android_<chatIdInt>_<slug>`; id validation is
-  `^-?\d{3,}$` under the `telegram` prefix (web hash may be negative, native
-  never is). numeric spaces differ between web hash and native chatId, so
-  cross-device matching rides the name slug like messenger/instagram.
+- native android: `GlitchDraftHook.hookTelegramChatNavigation`.
+  - **never anchor on `org.telegram.ui.ChatActivity`**: nagram's release apk is
+    R8'd and that class does not exist in any dex (`grep -a` for
+    `Lorg/telegram/ui/ChatActivity;` → 0 hits in classes.dex…classes4.dex; only
+    leftover `ChatActivity$61` / log strings survive). the hook installs fine
+    against a missing class and then silently never fires — that was the whole
+    "hook installed but nothing logs" detour.
+  - nagram's chat screen is `org.telegram.ui.uo` (extends
+    `org.telegram.ui.ActionBar.l2`); its dialog id field is `public long b6`.
+  - anchor instead on `org.telegram.ui.Components.ChatActivityEnterView` — the
+    composer every chat builds, and the class name survives R8 in both telegram
+    and nagram (nagram ctor: `(Activity, jy0, uo, boolean, v5)`). hook ALL ctors.
+  - the chat object is the ctor arg whose class hierarchy declares
+    `currentAccount`. that field lives on `ActionBar.l2`, **not** on the chat
+    class, so `getDeclaredField` alone finds nothing — walk superclasses
+    (`findFieldOrNull` / `allFields`). `XposedHelpers.getIntField` does walk, so
+    reading it is fine.
+  - dialogId resolution: try a literal `dialogId` field first (plain telegram),
+    then scan every `long` field across the hierarchy and validate against
+    `MessagesController.getUser(id)` / `getChat(peerId)`. the matched field name
+    is logged (`TG dialogId from obfuscated field 'b6' = …`), so a future nagram
+    obfuscation change is diagnosable instead of silent. when no ctor arg
+    qualifies the hook logs the arg class list (`ChatActivityEnterView ctor but
+    no chat arg (args=…)`) rather than returning quietly.
+  - id space: dialogId is exactly what the web hash uses (+userId, −groupId,
+    −100…channelId), so native and web rows line up on the numeric id — no
+    slug bridge needed here, unlike messenger/instagram. `getChat` wants the
+    bare peer id: `-dialogId - 1_000_000_000_000` for channels, `-dialogId`
+    for groups.
+  - id = `telegram_android_<dialogId>_<slug>`, validation `^-?\d{3,}$` under
+    the `telegram` prefix (dialogId is negative for groups/channels).
+  - scope must include `xyz.nextalone.nagram/0`; `adb install -r` of the module
+    resets enabled+scope, so re-run `modules enable` + `scope set …` (see the
+    xposed section above for the full list).
+  - **log ground truth is `/data/adb/lspd/log/*.log`, not logcat**: nagram logs
+    heavily enough that the module's lines get pushed out of the logcat ring
+    buffer within seconds. use
+    `adb shell su -c "grep -a -h 'GlitchDraft-LSPosed' /data/adb/lspd/log/*.log | tail -n 25"`.
+    caveat: the lspd file lags a few seconds behind, so right after an action
+    `adb logcat -d | Select-String VectorLegacyBridge` has the same lines
+    immediately - check logcat first when the lspd grep looks empty.
+  - config: nagram can't resolve the module's config provider (no `<queries>`
+    for `com.fahad.glitchdraft.lsposed`), so `tools/android-config.ps1` must
+    have pushed `files/glitchdraft_config.json` into nagram before saves work;
+    the panel header then ends with ` [file]`. verified 2026-10-26: save wrote
+    `nagram-hook-test` to `telegram_android_831166393_shajib_mgbhs_dc` and the
+    row was deleted back to `exists:false`.
 - slug-pick anchors now `^(messenger|instagram|telegram)_(web|android)_-?\d+_<slug>$`
   in all four implementations (DraftRepository.pickBestRow, neonService,
   firestoreService, glitchdraft_shim.neonPickBySlug) — change one, change all.
-- verify (when unparked): web — Edge with `--remote-debugging-port=9222
+- verify: web — Edge with `--remote-debugging-port=9222
   --profile-directory=Default`, open a web.telegram.org chat, panel id starts
-  `telegram_web_`; android — open a native chat, panel id
-  `telegram_android_<int>_<slug>`, save a draft, confirm the backend row +
-  slug-pick round-trip. delete any test row after.
+  `telegram_web_`; android — open a nagram chat, lspd log shows
+  `TG chat dialogId=<n> title='…' → telegram_android_<n>_<slug>`, panel header
+  matches, save a draft, confirm the backend row + slug-pick round-trip. delete
+  any test row after (`exists:false` again).
+- plain telegram (`org.telegram.messenger`) — UNVERIFIED. same hook should work
+  (ChatActivity + int chatId still exist there), but the enter-view anchor is
+  the only path exercised so far.
 
 ## known issues
 

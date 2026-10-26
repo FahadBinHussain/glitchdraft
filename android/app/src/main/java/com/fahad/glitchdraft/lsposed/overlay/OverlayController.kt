@@ -39,6 +39,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.fahad.glitchdraft.lsposed.data.DraftRepository
+import com.fahad.glitchdraft.lsposed.provider.ModuleConfig
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import java.io.ByteArrayOutputStream
@@ -1694,11 +1695,14 @@ object OverlayController {
         val id = _currentChatId
         val name = _currentChatName
         val pkg = currentPackage
+        // second config method in use (app can't see the module's provider):
+        // say so in the header instead of pretending everything is normal
+        val cfg = if (ModuleConfig.active) " [file]" else ""
         return when {
-            id != null && name != null -> "$name ($id)"
-            id != null  -> "scope: $id"
-            pkg.isNotEmpty() -> "scope: $pkg (app-level)"
-            else             -> "scope: unknown"
+            id != null && name != null -> "$name ($id)$cfg"
+            id != null  -> "scope: $id$cfg"
+            pkg.isNotEmpty() -> "scope: $pkg (app-level)$cfg"
+            else             -> "scope: unknown$cfg"
         }
     }
 

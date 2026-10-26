@@ -4,6 +4,7 @@
   "scripts": {
     "android:run": "pwsh tools/android.ps1 run",
     "android:build:release": "pwsh tools/android.ps1 release",
-    "android:release:apk": "pwsh tools/android.ps1 release-apk"
+    "android:release:apk": "pwsh tools/android.ps1 release-apk",
+    "android:config": "pwsh tools/android-config.ps1"
   }
 }
