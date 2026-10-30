@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -79,6 +80,22 @@ object OverlayController {
     private const val REQ_PICK_IMAGE = 0x4744  // "GD"
     private const val MAX_IMAGE_DIM = 1024
 
+    // ----- per-app icon/panel position storage -------------------------------
+    // one prefs file inside EACH hooked app's own data dir (the hook runs
+    // in-process as that app), so every app remembers where YOU left ITS
+    // icon. deliberately NOT the cloud settings row: the old
+    // `uiPositions.android_toggle/android_panel` keys were ONE global slot
+    // shared by every app (dragging the icon in messenger moved it in
+    // whatsapp too), cost a network round trip on attach and on every drag,
+    // and `DraftRepository.getSettings()` answers `{}` on any API failure —
+    // during the 2026-10-27→11-01 Neon 402 outage every attach silently
+    // fell back to the default position. local only, no fallback path.
+    private const val POS_PREFS = "glitchdraft_overlay_positions"
+    private const val POS_TOGGLE_X = "toggle_x"
+    private const val POS_TOGGLE_Y = "toggle_y"
+    private const val POS_PANEL_X = "panel_x"
+    private const val POS_PANEL_Y = "panel_y"
+
     // Accent colour that matches the extension
     private const val ACCENT  = 0xFF0084FF.toInt()
     private const val WHITE   = Color.WHITE
@@ -142,6 +159,8 @@ object OverlayController {
     // Debounce handler for position saves
     private val savePositionHandler = Handler(Looper.getMainLooper())
     private val savePositionRunnable = Runnable { persistPositions() }
+    // per-app position prefs of the currently attached app (set in attach())
+    private var posPrefs: SharedPreferences? = null
 
     // Panel-open sync tick: refetch while the panel is visible so edits and
     // deletes made on web show up without reopening the panel. re-render only
@@ -235,34 +254,34 @@ object OverlayController {
             // DraftRepository reads from module's device-protected prefs.
             repo = DraftRepository(activity.applicationContext)
 
-            // Load saved positions asynchronously, then build UI
-            scope.launch {
-                val savedPositions = try { repo!!.getSettings() } catch (_: Throwable) { null }
-                val togX = savedPositions?.optJSONObject("android_toggle")?.optInt("x", -1) ?: -1
-                val togY = savedPositions?.optJSONObject("android_toggle")?.optInt("y", -1) ?: -1
-                val panX = savedPositions?.optJSONObject("android_panel")?.optInt("x", -1) ?: -1
-                val panY = savedPositions?.optJSONObject("android_panel")?.optInt("y", -1) ?: -1
-                Handler(Looper.getMainLooper()).post {
-                    try {
-                        buildPanel(activity, if (panX >= 0) panX else -1, if (panY >= 0) panY else -1)
-                        buildToggle(activity, if (togX >= 0) togX else -1, if (togY >= 0) togY else -1)
-                        isAttached = true
-                        XposedBridge.log("$TAG: Overlay attached for $packageName (togPos=$togX,$togY panPos=$panX,$panY)")
-                    } catch (e: Throwable) {
-                        // attach rejected: fail loudly and clean up the half-built
-                        // views so the next onResume retries
-                        XposedBridge.log("$TAG: overlay attach REJECTED for $packageName: $e")
-                        detachView(panelView)
-                        detachView(toggleView)
-                        panelView = null
-                        toggleView = null
-                        draftList = null
-                        draftInput = null
-                        chatIdLabel = null
-                        decorHost = null
-                        inWindowMode = false
-                        isAttached = false
-                    }
+            // Load saved positions from THIS app's own prefs (per-app, local —
+            // no network round trip, see POS_PREFS above), then build UI
+            posPrefs = activity.getSharedPreferences(POS_PREFS, Context.MODE_PRIVATE)
+            val prefs = posPrefs!!
+            val togX = prefs.getInt(POS_TOGGLE_X, -1)
+            val togY = prefs.getInt(POS_TOGGLE_Y, -1)
+            val panX = prefs.getInt(POS_PANEL_X, -1)
+            val panY = prefs.getInt(POS_PANEL_Y, -1)
+            Handler(Looper.getMainLooper()).post {
+                try {
+                    buildPanel(activity, panX, panY)
+                    buildToggle(activity, togX, togY)
+                    isAttached = true
+                    XposedBridge.log("$TAG: Overlay attached for $packageName (togPos=$togX,$togY panPos=$panX,$panY source=local prefs)")
+                } catch (e: Throwable) {
+                    // attach rejected: fail loudly and clean up the half-built
+                    // views so the next onResume retries
+                    XposedBridge.log("$TAG: overlay attach REJECTED for $packageName: $e")
+                    detachView(panelView)
+                    detachView(toggleView)
+                    panelView = null
+                    toggleView = null
+                    draftList = null
+                    draftInput = null
+                    chatIdLabel = null
+                    decorHost = null
+                    inWindowMode = false
+                    isAttached = false
                 }
             }
         } catch (e: Throwable) {
@@ -286,6 +305,7 @@ object OverlayController {
         chatIdLabel = null
         stagedRow = null
         awaitingImagePick = false
+        posPrefs = null
         isAttached = false
     }
 
@@ -720,16 +740,21 @@ object OverlayController {
     private fun persistPositions() {
         val tp = toggleParams ?: return
         val pp = panelParams ?: return
-        scope.launch {
-            try {
-                val current = repo?.getSettings() ?: JSONObject()
-                current.put("android_toggle", JSONObject().apply { put("x", tp.x); put("y", tp.y) })
-                current.put("android_panel", JSONObject().apply { put("x", pp.x); put("y", pp.y) })
-                repo?.saveSettings(current)
-                XposedBridge.log("$TAG: Positions saved toggle=(${tp.x},${tp.y}) panel=(${pp.x},${pp.y})")
-            } catch (e: Throwable) {
-                XposedBridge.log("$TAG: persistPositions failed: $e")
-            }
+        val prefs = posPrefs
+        if (prefs == null) {
+            XposedBridge.log("$TAG: persistPositions skipped — no attached app prefs yet")
+            return
+        }
+        try {
+            prefs.edit()
+                .putInt(POS_TOGGLE_X, tp.x)
+                .putInt(POS_TOGGLE_Y, tp.y)
+                .putInt(POS_PANEL_X, pp.x)
+                .putInt(POS_PANEL_Y, pp.y)
+                .apply()
+            XposedBridge.log("$TAG: Positions saved toggle=(${tp.x},${tp.y}) panel=(${pp.x},${pp.y}) [local per-app prefs]")
+        } catch (e: Throwable) {
+            XposedBridge.log("$TAG: persistPositions failed: $e")
         }
     }
 

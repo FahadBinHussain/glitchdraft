@@ -17,7 +17,7 @@ android {
         minSdk = 26           // Android 8.0+ (LSPosed / EdXposed baseline)
         targetSdk = 34
         versionCode buildTime
-        versionName "1.4.1"
+        versionName "1.4.2"
     }
 
     // Release signing. Credentials come from the environment only — nothing is

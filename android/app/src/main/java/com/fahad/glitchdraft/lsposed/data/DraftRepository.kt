@@ -605,74 +605,9 @@ class DraftRepository(private val context: Context) {
         Unit
     }
 
-    suspend fun getSettings(): JSONObject = withContext(Dispatchers.IO) {
-        when (val cfg = readConfig()) {
-            is StorageConfig.Neon -> {
-                try {
-                    val conn = openNeonConnection(cfg, "/api/settings", "GET")
-                    if (conn.responseCode != 200) return@withContext JSONObject()
-                    val body = JSONObject(conn.inputStream.bufferedReader().readText())
-                    val settings = body.optJSONObject("settings") ?: return@withContext JSONObject()
-                    val uiPositions = settings.optJSONObject("uiPositions") ?: JSONObject()
-                    return@withContext uiPositions
-                } catch (_: Throwable) {
-                    return@withContext JSONObject()
-                }
-            }
-            is StorageConfig.Firebase -> {
-                try {
-                    val url = URL(docUrl(cfg, "settings/user"))
-                    val conn = url.openConnection() as HttpURLConnection
-                    conn.requestMethod = "GET"
-                    conn.connectTimeout = 8000
-                    conn.readTimeout = 8000
-
-                    if (conn.responseCode == 404) return@withContext JSONObject()
-                    if (conn.responseCode != 200) return@withContext JSONObject()
-
-                    val body = conn.inputStream.bufferedReader().readText()
-                    val doc = JSONObject(body)
-                    val raw = doc.optJSONObject("fields")
-                        ?.optJSONObject("uiPositions")
-                        ?.optString("stringValue", "{}") ?: "{}"
-                    return@withContext JSONObject(raw)
-                } catch (_: Throwable) {
-                    return@withContext JSONObject()
-                }
-            }
-            null -> JSONObject()
-        }
-    }
-
-    suspend fun saveSettings(uiPositions: JSONObject) = withContext(Dispatchers.IO) {
-        when (val cfg = readConfig()) {
-            is StorageConfig.Neon -> {
-                val conn = openNeonConnection(cfg, "/api/settings", "PUT")
-                conn.doOutput = true
-                val body = JSONObject().apply {
-                    put("uiPositions", uiPositions)
-                }
-                OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
-                conn.responseCode
-            }
-            is StorageConfig.Firebase -> {
-                val url = URL(docUrl(cfg, "settings/user"))
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "PATCH"
-                conn.setRequestProperty("Content-Type", "application/json")
-                conn.doOutput = true
-                conn.connectTimeout = 8000
-                conn.readTimeout = 8000
-
-                val body = JSONObject().apply {
-                    put("fields", JSONObject().apply {
-                        put("uiPositions", JSONObject().put("stringValue", uiPositions.toString()))
-                    })
-                }
-                OutputStreamWriter(conn.outputStream).use { it.write(body.toString()) }
-                conn.responseCode
-            }
-            null -> Unit
-        }
-    }
+    // NOTE: there is no getSettings()/saveSettings() here any more. the overlay
+    // icon/panel positions moved to each hooked app's own SharedPreferences
+    // (POS_PREFS in OverlayController) — per-app, offline, no cloud row. the
+    // webview position sync still goes through glitchdraft_shim.js
+    // (handleGetSettings/handleSaveSettings), which is a separate path.
 }

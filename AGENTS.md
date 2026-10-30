@@ -46,13 +46,31 @@ button on `edge://extensions` is fallback.
   MainActivity), `android:build:release`, `android:release:apk`. all three go
   through `tools/android.ps1`, which picks a JDK 21 (app/build.gradle pins
   source/target/jvmTarget to 21) and prints which one it used.
-  versionName is **1.4.1** (1.4.0 added the people calls; 1.4.1 is the egress
-  fix, `?meta=1` on the slug-pick list). `./gradlew assembleDebug assembleRelease`
-  from `android/` works too — the committed wrapper + Temurin 21 on PATH are
-  enough, no need for the pwsh helper. after `adb install -r` verify with
-  `su -c '/data/adb/modules/zygisk_vector/cli modules ls'` (must say `enabled`)
+  versionName is **1.4.2** (1.4.1 is the egress fix, `?meta=1` on the
+  slug-pick list; 1.4.2 moved overlay icon positions per-app). `./gradlew
+  assembleDebug assembleRelease` from `android/` works too — the committed
+  wrapper + Temurin 21 on PATH are enough, no need for the pwsh helper. after
+  `adb install -r` verify with `su -c '/data/adb/modules/zygisk_vector/cli modules ls'` (must say `enabled`)
   and `… scope ls com.fahad.glitchdraft.lsposed` (must still list all 7 apps);
-  both held on 2026-10-27.
+  both held on 2026-10-30.
+- **overlay icon positions are per-app and local** (added 2026-10-30, 1.4.2):
+  `OverlayController` reads/writes them in each hooked app's OWN
+  SharedPreferences (file `glitchdraft_overlay_positions`, keys
+  `toggle_x/toggle_y/panel_x/panel_y`) — the hook runs in-process as that app,
+  so every app remembers where you left ITS icon and apps never share a spot.
+  attach logs `… source=local prefs`, saves log `[local per-app prefs]`.
+  they used to live in the ONE global cloud slot
+  (`settings.uiPositions.android_toggle/android_panel`): shared across all apps
+  (dragging it in messenger moved it in whatsapp), a network round trip on
+  every attach + every drag-end, and `getSettings()` returned `{}` on any API
+  failure — during the 2026-10-27→11-01 Neon 402 outage the icon silently
+  reset to default on every open. `DraftRepository.getSettings/saveSettings`
+  are deleted so nothing wires positions back to the cloud; the webview
+  position sync is a SEPARATE path (`glitchdraft_shim.js`
+  `handleGetSettings/handleSaveSettings` + `gdStartPositionListener`) and was
+  deliberately left alone. verify: drag the icon in one app, `am force-stop`
+  + relaunch it — lspd log attach line must show the dragged coords with
+  `source=local prefs`, and a second app must keep its own different coords.
 - the gradle wrapper (`android/gradlew`, `gradlew.bat`,
   `android/gradle/wrapper/gradle-wrapper.jar`) is committed. an older .gitignore
   rule kept the jar out under "download on demand" — gradlew cannot run without
