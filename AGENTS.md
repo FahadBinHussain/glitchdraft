@@ -46,6 +46,13 @@ button on `edge://extensions` is fallback.
   MainActivity), `android:build:release`, `android:release:apk`. all three go
   through `tools/android.ps1`, which picks a JDK 21 (app/build.gradle pins
   source/target/jvmTarget to 21) and prints which one it used.
+  versionName is **1.4.1** (1.4.0 added the people calls; 1.4.1 is the egress
+  fix, `?meta=1` on the slug-pick list). `./gradlew assembleDebug assembleRelease`
+  from `android/` works too — the committed wrapper + Temurin 21 on PATH are
+  enough, no need for the pwsh helper. after `adb install -r` verify with
+  `su -c '/data/adb/modules/zygisk_vector/cli modules ls'` (must say `enabled`)
+  and `… scope ls com.fahad.glitchdraft.lsposed` (must still list all 7 apps);
+  both held on 2026-10-27.
 - the gradle wrapper (`android/gradlew`, `gradlew.bat`,
   `android/gradle/wrapper/gradle-wrapper.jar`) is committed. an older .gitignore
   rule kept the jar out under "download on demand" — gradlew cannot run without
@@ -179,6 +186,50 @@ button on `edge://extensions` is fallback.
   tab was open, ~12 CU-h in 4 days ≈ the whole 100 CU-h monthly quota in one cycle.
   Now 10s and fully paused on `document.hidden` — only a hidden tab lets the compute
   reach scale-to-zero, a visible tab keeps it awake no matter the interval.
+- **egress burn = the 2026-10-27 outage.** Neon Free allows **5 GB public network
+  transfer per project per month** (compute is 100 CU-h/project, storage 1 GB —
+  both were fine: 67.7 CU-h, 39 MB). `glitchdraft` reached 6.44 GB on Oct 27 and
+  Neon then answered **every** query with `HTTP 402 "Your account or project has
+  exceeded the quota"`. symptoms: `/api/health` 200, but `/api/drafts`,
+  `/api/settings` and `/api/people` all 500 with an **empty** body (a valid key
+  gives 500, a missing key still gives 401, so auth/routes look healthy). the
+  period is 2026-10-01 → 2026-11-01, so it self-healed on the 1st with no action.
+  diagnose with `vercel-account.ps1 run bayazid10@gmail.com logs
+  glitchdraft.vercel.app --since 15m` — the Neon 402 is only in the function
+  log; `env ls` (both vars present) and `/api/health` both look fine.
+- what burned the 5 GB, and the fix (2026-10-27, `?meta=1` + server-side preview):
+  1. `candidatesFor` ran `select * from drafts` for **every** people lookup — the
+     whole table, base64 photos included, every 10s while an Android panel was
+     open and every 60s on web — just to render a 70-char picker preview. the
+     preview is now computed **in postgres** (`previewSql` in `lib/people.ts`):
+     newest message by timestamp, `<img>` → ` [image]`, other tags dropped,
+     whitespace collapsed, entities deliberately left alone so `plainText`
+     stays the single decode pass (decoding twice would mangle `&`), capped
+     at 200 chars. `messages` is never selected there any more.
+  2. `GET /api/drafts` handed every row's `messages` to the slug-pickers
+     (`neonService.findDocByNameSlug` / `findDocByMessengerNumericId`,
+     `DraftRepository.listDraftRowsNeon`, shim `neonPickBySlug`), which rank by
+     id / contactName / lastModified only. new `?meta=1` returns exactly those
+     three fields; call sites use `getAllDrafts(true)` / `/api/drafts?meta=1`.
+     **`getAllDrafts()` with no argument still returns messages** — the import UI
+     (`background.js handleGetAllDrafts`) needs them, so never put `?meta=1`
+     there.
+  measured on a seeded 7-row table with two 90 KB images: `select * from drafts`
+  = 182,872 bytes → `previewSql` = 955 bytes (**99.48% less**), `?meta=1` list
+  = 559 bytes. verification = `C:\tmp\pgcheck\check-from-source.mjs` (PGlite /
+  WASM postgres): it regex-lifts `previewSql` **out of `people.ts`** so the test
+  runs the shipped SQL, not a copy, then asserts newest-message selection,
+  `[image]`, empty rows, entity preservation, the 200-char cap and zero base64.
+  rerun it if you touch `previewSql` — plain postgres on this box is useless:
+  every backend dies with `0xC0000142` / `could not reserve shared memory
+  region`. **still unverified anywhere real**: Neon was 402'ing the whole time,
+  so the routes have no end-to-end run, and a local `DATABASE_URL` cannot stand
+  in — `neon()` speaks Neon's HTTP protocol, not the wire protocol.
+- remaining lever if egress climbs again: the 10s per-thread poll still ships the
+  whole row (`GET /api/drafts/<id>`, ~93 KB for an image-bearing draft). a
+  `?lm=<lastModified>` → `{unchanged:true}` shortcut would cut that to nothing,
+  but it changes the getDraft contract in `content.js`, the android assets fork,
+  `glitchdraft_shim.js` and `background.js` together — not a drive-by change.
 - shared vs forked files between `extension/` and
   `android/app/src/main/assets/glitchdraft/` (contract, 2026-10-05):
   **byte-identical shared files** = `draftSync.js`, `draftImport.js`, `styles.css`
@@ -523,6 +574,19 @@ button on `edge://extensions` is fallback.
   the device is in active use, so it needs a quiet minute. while the panel is
   open `uiautomator dump` returns ONLY the overlay window (a few KB), so panel
   state = `Type a draft` present; with it closed the dump is Messenger's window.
+- **blocked 2026-10-27**: repeated on the phone after `am force-stop
+  com.facebook.orca` (module 1.4.1). the panel opened fine in the Jarif chat —
+  toggle at screen (112,974), header resolved
+  `messenger_android_100009263994215_jarif_mustafiz` — but the strip rendered
+  `People lookup failed: people GET /api/people?… failed: HTTP` instead of the
+  empty state. that was the Neon egress outage (see below), **not** the strip,
+  so the linked state above is still unverified and no link/unlink/delete ran
+  that day: there is no test data to clean up. two smaller findings from that
+  run: (a) the strip's error TextView clips the status number, so it renders the
+  useless `failed: HTTP` with no code — widen it if you touch that view; (b)
+  `uiautomator dump` reported whichever app was foreground a moment earlier
+  while Messenger was focused, so **always pair a dump with a screencap** and
+  treat `dumpsys window windows` `fl=` as the ground truth for panel state.
 
 ## driving real edge for extension tests
 

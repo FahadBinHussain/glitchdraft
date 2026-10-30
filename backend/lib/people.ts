@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { drafts, people, personLinks } from "@/drizzle/schema";
 
@@ -80,10 +80,48 @@ function plainText(html: string, max = 70): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
-function previewOf(messages: DraftPayload["messages"]): string {
-  const newest = [...messages].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0))[0];
-  return newest ? plainText(newest.html || "") : "";
-}
+/**
+ * The picker preview, evaluated by Postgres so `messages` never crosses the
+ * wire.
+ *
+ * This is the fix for the 2026-10-27 Neon outage: `candidatesFor` used to
+ * `select *` the whole drafts table on every people lookup (every 10s while a
+ * panel is open, every 60s on web), which dragged every base64-embedded photo
+ * out of the database just to render a 70-character picker preview. The 5 GB
+ * free-plan egress allowance was gone by Oct 27 and Neon started answering
+ * every query with HTTP 402.
+ *
+ * Rules (same as the old in-JS preview): newest message by timestamp, `<img>`
+ * -> " [image]", other tags dropped, whitespace collapsed. Entities are left
+ * alone so `plainText` still does the one and only decode pass - decoding here
+ * too would double-decode `&amp;`. The 200-char cap bounds the payload;
+ * plainText only ever reads the first 70, so the cut is never visible.
+ */
+const previewSql = sql<string>`left(
+  btrim(
+    regexp_replace(
+      regexp_replace(
+        regexp_replace(
+          coalesce(
+            (
+              select t.m ->> 'html'
+              from jsonb_array_elements(${drafts.messages}) as t(m)
+              order by (case when t.m ->> 'timestamp' ~ '^-?[0-9]+$'
+                             then (t.m ->> 'timestamp')::bigint else 0 end) desc
+              limit 1
+            ),
+            ''
+          ),
+          '<img[^>]*>', ' [image] ', 'gi'
+        ),
+        '<[^>]+>', ' ', 'g'
+      ),
+      '\\s+', ' ', 'g'
+    ),
+    ' '
+  ),
+  200
+)`;
 
 export async function draftsByIds(threadIds: string[]): Promise<Record<string, DraftPayload>> {
   if (threadIds.length === 0) return {};
@@ -227,8 +265,16 @@ export async function candidatesFor(
   threadId: string,
   liveName: string | null
 ): Promise<Suggestion[]> {
+  // metadata + a preview computed in the database - never `messages`
   const [draftRows, linkRows] = await Promise.all([
-    db.select().from(drafts),
+    db
+      .select({
+        threadId: drafts.threadId,
+        contactName: drafts.contactName,
+        lastModified: drafts.lastModified,
+        preview: previewSql
+      })
+      .from(drafts),
     db.select().from(personLinks)
   ]);
   const linked = new Set(linkRows.map((row) => row.threadId));
@@ -242,13 +288,12 @@ export async function candidatesFor(
     if (!PERSON_PLATFORMS.has(platformOf(row.threadId))) continue;
     const name = (row.contactName || "").trim() || slugFromThreadId(row.threadId);
     const score = scoreSlug(targetSlug, slugify(name));
-    const messages = row.messages ?? [];
     scored.push({
       threadId: row.threadId,
       contactName: row.contactName ?? null,
       platform: platformOf(row.threadId),
       score,
-      preview: previewOf(messages),
+      preview: plainText(row.preview || ""),
       lastModified: Number(row.lastModified) || 0
     });
   }

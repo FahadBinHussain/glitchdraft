@@ -141,7 +141,9 @@
     // numeric spaces never overlap, so rows are ranked by contactName slug >
     // web row > newest lastModified. Read-only pick — never moves/deletes rows.
     async function neonPickBySlug(nameSlug) {
-        const list = await neonRequest('/api/drafts', 'GET');
+        // ?meta=1 skips `messages`: the ranking below only needs id, contactName
+        // and lastModified, and messages carries every base64 photo.
+        const list = await neonRequest('/api/drafts?meta=1', 'GET');
         const drafts = list?.drafts || {};
         const esc = String(nameSlug).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const anchor = new RegExp('^(messenger|instagram|telegram)_(web|android)_-?\\d+_' + esc + '$');

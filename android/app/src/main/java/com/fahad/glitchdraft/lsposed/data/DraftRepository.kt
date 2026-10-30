@@ -240,9 +240,13 @@ class DraftRepository(private val context: Context) {
         }
     }
 
+    // ?meta=1 = threadId + contactName + lastModified only. pickBestRow never
+    // reads `messages`, and `messages` carries every base64 photo - the full
+    // list used to ship the whole table on every 10s sync tick (see AGENTS.md,
+    // the 2026-10-27 Neon egress outage).
     private fun listDraftRowsNeon(cfg: StorageConfig.Neon): List<DraftRowMeta> {
         return try {
-            val conn = openNeonConnection(cfg, "/api/drafts", "GET")
+            val conn = openNeonConnection(cfg, "/api/drafts?meta=1", "GET")
             if (conn.responseCode != 200) return emptyList()
             val body = JSONObject(conn.inputStream.bufferedReader().readText())
             if (!body.optBoolean("success", false)) return emptyList()

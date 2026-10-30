@@ -109,7 +109,7 @@ class NeonService {
     //   3. newest lastModified
     // No needsRename on purpose: reading a foreign row must never move/delete it.
     async findDocByNameSlug(nameSlug, excludeId = null) {
-        const allDrafts = await this.getAllDrafts();
+        const allDrafts = await this.getAllDrafts(true);
         const esc = String(nameSlug).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const anchor = new RegExp("^(messenger|instagram|telegram)_(web|android)_-?\\d+_" + esc + "$");
         const slugify = (s) => String(s || "").trim().toLowerCase()
@@ -161,8 +161,13 @@ class NeonService {
         return data.settings || { uiPositions: {}, appConfig: {} };
     }
 
-    async getAllDrafts() {
-        const data = await this.request("/api/drafts", { method: "GET" });
+    // meta = true asks the backend to leave `messages` out. Only the slug-pickers
+    // use it: they rank rows by id / contactName / lastModified and never read a
+    // message, but `messages` carries every base64-embedded photo - shipping the
+    // whole table for a name match is what burned the Neon egress quota
+    // (free plan: 5 GB/project/month) and 402'd every query on 2026-10-27.
+    async getAllDrafts(meta = false) {
+        const data = await this.request(meta ? "/api/drafts?meta=1" : "/api/drafts", { method: "GET" });
         return data.drafts || {};
     }
 
@@ -213,7 +218,7 @@ class NeonService {
 
     async findDocByMessengerNumericId(numericId, excludeId = null) {
         if (!numericId) return null;
-        const allDrafts = await this.getAllDrafts();
+        const allDrafts = await this.getAllDrafts(true);
         const prefix = "messenger_web_" + numericId;
         const prefixAndroid = "messenger_android_" + numericId;
         const ids = Object.keys(allDrafts).filter((id) =>
