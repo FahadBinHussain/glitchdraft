@@ -65,6 +65,22 @@ function slugFromThreadId(threadId: string): string {
   return parts.length > 1 ? parts[parts.length - 1] : "";
 }
 
+/**
+ * Telegram dialog ids are GLOBAL: one chat carries the same numeric id in
+ * every client - the web url hash is the same number the native app calls the
+ * dialogId. The thread id still carries the client tag though
+ * (telegram_web_… vs telegram_android_…), and person_links is keyed by the
+ * FULL thread id, so a person linked on the phone was invisible on
+ * web.telegram.org and the other way round. Return the sibling prefix so a
+ * lookup can fall back to it.
+ */
+export function telegramClientSibling(threadId: string): string | null {
+  const match = /^telegram_(web|android)_(-?\d+)_/.exec(threadId);
+  if (!match) return null;
+  const other = match[1] === "web" ? "android" : "web";
+  return `telegram_${other}_${match[2]}_`;
+}
+
 function plainText(html: string, max = 70): string {
   const text = html
     .replace(/<img[^>]*>/gi, " [image] ")
@@ -150,14 +166,32 @@ async function personById(personId: string): Promise<PersonPayload | null> {
 }
 
 export async function personForThread(threadId: string): Promise<PersonPayload | null> {
-  const link = await db
+  const direct = await linkForThread(threadId);
+  if (direct) return personById(direct.personId);
+
+  // telegram: the same chat is the same person in every client, so a person
+  // linked on nagram resolves on web.telegram.org and vice versa
+  const sibling = telegramClientSibling(threadId);
+  if (sibling) {
+    const rows = await db
+      .select()
+      .from(personLinks)
+      .where(sql`starts_with(${personLinks.threadId}, ${sibling})`)
+      .limit(1);
+    const hit = rows[0];
+    if (hit) return personById(hit.personId);
+  }
+
+  return null;
+}
+
+async function linkForThread(threadId: string) {
+  const rows = await db
     .select()
     .from(personLinks)
     .where(eq(personLinks.threadId, threadId))
     .limit(1);
-  const row = link[0];
-  if (!row) return null;
-  return personById(row.personId);
+  return rows[0] ?? null;
 }
 
 export async function listPeople(): Promise<PersonPayload[]> {
@@ -278,6 +312,11 @@ export async function candidatesFor(
     db.select().from(personLinks)
   ]);
   const linked = new Set(linkRows.map((row) => row.threadId));
+  // a linked telegram thread already covers its sibling client (same dialog id)
+  // - don't offer the same person again as a "link this one" candidate
+  const linkedTelegramSiblings = linkRows
+    .map((row) => telegramClientSibling(row.threadId))
+    .filter((prefix): prefix is string => prefix !== null);
   const current = draftRows.find((row) => row.threadId === threadId);
   const targetName = (liveName || current?.contactName || "").trim() || slugFromThreadId(threadId);
   const targetSlug = slugify(targetName);
@@ -285,6 +324,7 @@ export async function candidatesFor(
   const scored: Suggestion[] = [];
   for (const row of draftRows) {
     if (row.threadId === threadId || linked.has(row.threadId) || isGroupThread(row.threadId)) continue;
+    if (linkedTelegramSiblings.some((prefix) => row.threadId.startsWith(prefix))) continue;
     if (!PERSON_PLATFORMS.has(platformOf(row.threadId))) continue;
     const name = (row.contactName || "").trim() || slugFromThreadId(row.threadId);
     const score = scoreSlug(targetSlug, slugify(name));

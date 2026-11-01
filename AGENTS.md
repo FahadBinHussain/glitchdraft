@@ -438,8 +438,12 @@ button on `edge://extensions` is fallback.
 ## telegram + nagram (added 2026-10-16, nagram 2026-10-26)
 
 - **nagram is the target client** (`xyz.nextalone.nagram`) — the user does not
-  use plain telegram. `org.telegram.messenger` stays in `TARGET_PACKAGES` but is
-  unverified; don't assume a hook proven on nagram works there.
+  use plain telegram (decided 2026-11-01: support for the official telegram
+  client comes later). `org.telegram.messenger` stays in `TARGET_PACKAGES` but is
+  unverified; don't assume a hook proven on nagram works there. on the phone it
+  is installed but **DISABLED** (`enabled=2`, no launcher activity → `monkey`
+  aborts with "No activities found") and has no session, so verifying it needs
+  the user to enable it and log in — don't enable it on your own.
 - web (extension only): config.js `SUPPORTED_SITES` + background `onInstalled`
   reload pattern + manifest host_permissions `https://web.telegram.org/*`
   (extension 1.3.0). chat key comes from the url hash: `#123…` (user),
@@ -495,6 +499,37 @@ button on `edge://extensions` is fallback.
     the panel header then ends with ` [file]`. verified 2026-10-26: save wrote
     `nagram-hook-test` to `telegram_android_831166393_shajib_mgbhs_dc` and the
     row was deleted back to `exists:false`.
+  - **native telegram VERIFIED on nagram 2026-11-01** (module 1.4.3): the hook
+    fires and logs `TG dialogId from obfuscated field 'b6' = 8772435410` +
+    `TG chat dialogId=8772435410 title='Net Jony' →
+    telegram_android_8772435410_net_jony`; the panel header matched
+    `Net Jony (telegram_android_8772435410_net_jony)`. saving a draft from the
+    panel wrote the row `telegram_android_8772435410_net_jony` (contactName
+    "Net Jony", 1 message) and it showed up in `GET /api/drafts?meta=1` (the
+    slug-pick list); the row was then deleted (`exists:false`) again.
+    the panel needs `SYSTEM_ALERT_WINDOW` or it drops to in-window mode and its
+    EditText never takes focus (see the MIUI appops note above) — with the
+    appop granted the input took focus normally
+    (`mServedView=android.widget.EditText`).
+  - **telegram is ONE identity across clients — the backend resolves the
+    sibling** (2026-11-01): a telegram chat carries the SAME numeric id in
+    every client (the web url hash == the native dialogId), but the thread id
+    still has the client tag (`telegram_web_…` vs `telegram_android_…`) and
+    `person_links.thread_id` is the PK. so a person linked on nagram was
+    invisible on web.telegram.org and the other way round — the older AGENTS
+    line "no slug bridge needed here, unlike messenger/instagram" was WRONG
+    for person links (it holds for the numeric id, not for the link key).
+    `backend/lib/people.ts` now resolves the sibling client:
+    `telegramClientSibling()` → `starts_with(thread_id, 'telegram_<other>_<id>_')`.
+    `personForThread` resolves it, `createPerson` REUSES that person instead of
+    making a duplicate, and `candidatesFor` drops the sibling from the picker
+    (it would otherwise offer the same person as a fresh link).
+    verified on prod: a person created on `telegram_android_8772435410_net_jony`
+    resolved for `telegram_web_8772435410_net_jony`, `POST /api/people` from the
+    web id came back `existing:true` with the same person id, and the picker
+    listed 0 `telegram_web_*` candidates. the test person was deleted after.
+    messenger/instagram still need the NAME-slug bridge (their web and android
+    numeric ids are different id spaces) — see the thread-id drift bullet above.
 - slug-pick anchors now `^(messenger|instagram|telegram)_(web|android)_-?\d+_<slug>$`
   in all four implementations (DraftRepository.pickBestRow, neonService,
   firestoreService, glitchdraft_shim.neonPickBySlug) — change one, change all.
@@ -504,9 +539,13 @@ button on `edge://extensions` is fallback.
   `TG chat dialogId=<n> title='…' → telegram_android_<n>_<slug>`, panel header
   matches, save a draft, confirm the backend row + slug-pick round-trip. delete
   any test row after (`exists:false` again).
-- plain telegram (`org.telegram.messenger`) — UNVERIFIED. same hook should work
-  (ChatActivity + int chatId still exist there), but the enter-view anchor is
-  the only path exercised so far.
+- plain telegram (`org.telegram.messenger`) — UNVERIFIED, and deliberately so
+  for now: the user does not use it (nagram is the client), and support for the
+  official telegram client comes later. the hook should work there the same
+  way (ChatActivity + int chatId still exist), but the enter-view anchor is the
+  only path exercised so far — and the app on the phone is disabled with no
+  session, so there is nothing to verify against until it is enabled + logged
+  in.
 
 ## people / cross-platform identity (added 2026-10-26)
 
