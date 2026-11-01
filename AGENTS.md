@@ -46,8 +46,10 @@ button on `edge://extensions` is fallback.
   MainActivity), `android:build:release`, `android:release:apk`. all three go
   through `tools/android.ps1`, which picks a JDK 21 (app/build.gradle pins
   source/target/jvmTarget to 21) and prints which one it used.
-  versionName is **1.4.2** (1.4.1 is the egress fix, `?meta=1` on the
-  slug-pick list; 1.4.2 moved overlay icon positions per-app). `./gradlew
+  versionName is **1.4.3** (1.4.1 is the egress fix, `?meta=1` on the
+  slug-pick list; 1.4.2 moved overlay icon positions per-app; 1.4.3 resolves
+  the person by slug when the android thread id misses — see the android
+  thread-id drift bullet below). `./gradlew
   assembleDebug assembleRelease` from `android/` works too — the committed
   wrapper + Temurin 21 on PATH are enough, no need for the pwsh helper. after
   `adb install -r` verify with `su -c '/data/adb/modules/zygisk_vector/cli modules ls'` (must say `enabled`)
@@ -586,10 +588,15 @@ button on `edge://extensions` is fallback.
   keeps its old offset across `removeAllViews()`, so a reopened sheet started
   mid-list with the "Link to …" header stranded above the frame — now
   `scrollTo(0,0)` on open. `Cancel` closes the sheet and `✕` closes the panel,
-  both verified by dump. **still open**: the linked state on the phone (person
-  head, per-platform chips with `×`, merged copy-only rows) and `×` unlink —
-  the tap to create the link was interrupted when the phone switched apps, and
-  the device is in active use, so it needs a quiet minute. while the panel is
+  both verified by dump. **android linked state VERIFIED 2026-11-01** (device
+  21091116UI, module 1.4.3): in the Cat Fren chat the strip painted the person
+  head (`Cat Fren` / `4 drafts · 2 apps`), the chip row (`All 4`, `IG 1 ×`,
+  `MSGR 3 ×`, `+ link`) and the merged foreign rows with their platform badge
+  + **Copy only**; the chip `×` unlinked the IG identity (strip repainted to
+  `3 drafts · 1 app`, only `MSGR 3 ×` left, "No drafts on this platform yet")
+  and re-linking it restored `4 drafts · 2 apps`. the FIRST attempt showed the
+  empty state — that was the thread-id drift below, a real bug, not a fluke.
+  while the panel is
   open `uiautomator dump` returns ONLY the overlay window (a few KB), so panel
   state = `Type a draft` present; with it closed the dump is Messenger's window.
 - **blocked 2026-10-27**: repeated on the phone after `am force-stop
@@ -598,13 +605,40 @@ button on `edge://extensions` is fallback.
   `messenger_android_100009263994215_jarif_mustafiz` — but the strip rendered
   `People lookup failed: people GET /api/people?… failed: HTTP` instead of the
   empty state. that was the Neon egress outage (see below), **not** the strip,
-  so the linked state above is still unverified and no link/unlink/delete ran
-  that day: there is no test data to clean up. two smaller findings from that
+  so nothing about the linked state was proven that day and no link/unlink/delete
+  ran (the linked state was verified later — see 2026-11-01 above). two smaller findings from that
   run: (a) the strip's error TextView clips the status number, so it renders the
   useless `failed: HTTP` with no code — widen it if you touch that view; (b)
   `uiautomator dump` reported whichever app was foreground a moment earlier
   while Messenger was focused, so **always pair a dump with a screencap** and
   treat `dumpsys window windows` `fl=` as the ground truth for panel state.
+- **the android thread id is NOT a stable key for a person link** (found
+  2026-11-01, fixed in module 1.4.3): the same Cat Fren chat resolved under
+  three different ids over time — `messenger_android_410625006_cat_fren` (the
+  id in an old code comment), `messenger_android_410750012_cat_fren` (the link
+  row in the DB) and `messenger_android_410775002_cat_fren` (live, from the
+  inbox path). whatever the cause (Messenger hands the module a conversation id
+  that differs by entry path — inbox vs notification deep link), the effect is
+  the same: `GET /api/people?threadId=` matches the id EXACTLY, so the strip
+  rendered the unlinked empty state (`Link this chat to the same person
+  elsewhere` + `+ link`) even though the drafts right below it were the
+  person's. the draft list was ALWAYS slug-bridged (`pickBestRow`); only the
+  person lookup was id-exact. `DraftRepository.getPerson` now falls back to
+  the row the draft list already picked for this chat and asks for the person
+  that owns THAT row — same anchor, same ranking, no new heuristic:
+  log line `[DraftRepo] person miss on '<android id>' (slug '<slug>') ->
+  retry with '<row id>'`. the fallback row id is cached per chat, so the 10s
+  panel tick does not re-list the meta rows (the miss call itself is cheap —
+  no person, no drafts — so only ONE heavy people response per tick either way).
+  the web side needs no equivalent: a web link is
+  created from the web id, so its exact match always hits.
+  the DB now carries BOTH android ids for Cat Fren
+  (`messenger_android_410750012_cat_fren` + `messenger_android_410775002_cat_fren`)
+  so the strip works on either; add a new id whenever the phone resolves a
+  new one (`POST /api/people/links {personId, threadId}`), and do not delete
+  the older ones — they are the same person, just a different conversation id.
+  beware: `GET /api/people?name=<display name>` does NOT resolve by name (it
+  only fills `candidates`), so a slug fallback has to go through a row id.
 
 ## driving real edge for extension tests
 

@@ -25,9 +25,20 @@ class DraftRepository(private val context: Context) {
         val lastModified: Long
     )
 
+    // chatId -> the slug-picked row id that carried the person. cached so the
+    // fallback below does NOT re-list the meta rows on every 10s panel tick
+    // (the meta list is the cheap-but-not-free call; 1.4.1 trimmed its payload).
+    private var personFallbackRow: Pair<String, String>? = null
+
     companion object {
         private const val FS_BASE = "https://firestore.googleapis.com/v1/projects"
         private const val TAG = "[DraftRepo]"
+
+        // chat id -> trailing name slug: "messenger_android_410775002_cat_fren" -> "cat_fren".
+        // The numeric part is NOT stable (Messenger hands the module a different
+        // conversation id per entry path - inbox vs notification deep link), the
+        // slug is what bridges a web row and an android row for the same person.
+        private val NAME_SLUG_TAIL = Regex("^(?:messenger|instagram|telegram)_(?:web|android)_-?\\d+_(.+)$")
     }
 
     private sealed class StorageConfig {
@@ -148,7 +159,7 @@ class DraftRepository(private val context: Context) {
     }
 
     private fun getDraftFromFirebase(cfg: StorageConfig.Firebase, chatId: String): List<Draft> {
-        val nameSlugMatch = Regex("^(?:messenger|instagram|telegram)_(?:web|android)_-?\\d+_(.+)$").find(chatId)
+        val nameSlugMatch = NAME_SLUG_TAIL.find(chatId)
         if (nameSlugMatch != null) {
             val nameSlug = nameSlugMatch.groupValues[1]
             val best = pickBestRow(listDraftRowsFirebase(cfg), nameSlug)
@@ -164,7 +175,7 @@ class DraftRepository(private val context: Context) {
     }
 
     private fun getDraftFromNeon(cfg: StorageConfig.Neon, chatId: String): List<Draft> {
-        val nameSlugMatch = Regex("^(?:messenger|instagram|telegram)_(?:web|android)_-?\\d+_(.+)$").find(chatId)
+        val nameSlugMatch = NAME_SLUG_TAIL.find(chatId)
         if (nameSlugMatch != null) {
             val nameSlug = nameSlugMatch.groupValues[1]
             val best = pickBestRow(listDraftRowsNeon(cfg), nameSlug)
@@ -511,12 +522,39 @@ class DraftRepository(private val context: Context) {
     /** GET /api/people?threadId=&name= — `person` is null when nothing is linked. */
     suspend fun getPerson(chatId: String, name: String?): PersonLookup = withContext(Dispatchers.IO) {
         val cfg = requireNeon()
-        val path = buildString {
-            append("/api/people?threadId=").append(encodeThreadId(chatId))
+        fun pathFor(threadId: String) = buildString {
+            append("/api/people?threadId=").append(encodeThreadId(threadId))
             if (!name.isNullOrBlank()) append("&name=").append(encodeThreadId(name))
         }
-        val json = peopleCall(cfg, path, "GET")
-        val person = json.optJSONObject("person")
+        var json = peopleCall(cfg, pathFor(chatId), "GET")
+        var person = json.optJSONObject("person")
+        if (person == null) {
+            // The android thread id is NOT stable: Messenger hands the module a
+            // different conversation id depending on how the chat was opened (inbox
+            // vs notification deep link), so the exact id misses a person that IS
+            // linked under another id - the strip then renders the unlinked empty
+            // state even though the drafts right below it are the person's.
+            // Re-ask with the row the draft list already picked for this chat:
+            // same name slug, same ranked anchor (pickBestRow).
+            val slug = NAME_SLUG_TAIL.find(chatId)?.groupValues?.get(1)
+            if (!slug.isNullOrBlank()) {
+                var fallbackId = personFallbackRow?.takeIf { it.first == chatId }?.second
+                if (fallbackId == null) {
+                    fallbackId = pickBestRow(listDraftRowsNeon(cfg), slug)?.id
+                    if (fallbackId != null) personFallbackRow = chatId to fallbackId
+                }
+                if (fallbackId != null && fallbackId != chatId) {
+                    XposedBridge.log(
+                        "$TAG person miss on '$chatId' (slug '$slug') -> retry with '$fallbackId'"
+                    )
+                    json = peopleCall(cfg, pathFor(fallbackId), "GET")
+                    person = json.optJSONObject("person")
+                    // the cached row no longer carries the person - drop it and
+                    // recompute the anchor on the next lookup
+                    if (person == null) personFallbackRow = null
+                }
+            }
+        }
 
         val threads = mutableListOf<PersonThread>()
         val personThreadIds = mutableListOf<String>()
