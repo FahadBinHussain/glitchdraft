@@ -87,6 +87,17 @@ function isTelegramBaseOrSlug(threadId: string, base: string): boolean {
   return threadId === base || threadId.startsWith(`${base}_`);
 }
 
+/**
+ * The base of a telegram thread id: the client plus the numeric dialog id,
+ * without the name slug. Two ids with the same base are the same chat in the
+ * same client - the slug only rides on the display name and changes when the
+ * contact is renamed.
+ */
+function telegramBase(threadId: string): string | null {
+  const match = /^telegram_(web|android)_(-?\d+)(?:_|$)/.exec(threadId);
+  return match ? `telegram_${match[1]}_${match[2]}` : null;
+}
+
 function plainText(html: string, max = 70): string {
   const text = html
     .replace(/<img[^>]*>/gi, " [image] ")
@@ -204,11 +215,24 @@ export async function personForThread(threadId: string): Promise<PersonPayload |
  *
  * The link is safe to write on a lookup: the chat is provably the same one
  * (same numeric dialog id), and the row is skipped when that thread id is
- * already linked to someone else.
+ * already linked to somebody else. A chat that is already linked under a
+ * different name slug (the contact was renamed) keeps its existing link -
+ * one link per client, so the strip lists the chat once.
  */
 async function adoptSiblingThread(personId: string, threadId: string): Promise<void> {
   const existing = await linkForThread(threadId);
   if (existing) return;
+  const base = telegramBase(threadId);
+  if (base) {
+    const rows = await db
+      .select()
+      .from(personLinks)
+      .where(sql`starts_with(${personLinks.threadId}, ${base})`);
+    const sameChat = rows.some(
+      (row) => row.personId === personId && isTelegramBaseOrSlug(row.threadId, base)
+    );
+    if (sameChat) return;
+  }
   await db.insert(personLinks).values({ personId, threadId }).onConflictDoNothing();
 }
 

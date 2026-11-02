@@ -46,10 +46,12 @@ button on `edge://extensions` is fallback.
   MainActivity), `android:build:release`, `android:release:apk`. all three go
   through `tools/android.ps1`, which picks a JDK 21 (app/build.gradle pins
   source/target/jvmTarget to 21) and prints which one it used.
-  versionName is **1.4.3** (1.4.1 is the egress fix, `?meta=1` on the
+  versionName is **1.4.4** (1.4.1 is the egress fix, `?meta=1` on the
   slug-pick list; 1.4.2 moved overlay icon positions per-app; 1.4.3 resolves
   the person by slug when the android thread id misses — see the android
-  thread-id drift bullet below). `./gradlew
+  thread-id drift bullet below; 1.4.4 drops a draft that would be listed
+  twice once the telegram sibling thread is linked to the same person — see
+  the telegram cross-client bullet below). `./gradlew
   assembleDebug assembleRelease` from `android/` works too — the committed
   wrapper + Temurin 21 on PATH are enough, no need for the pwsh helper. after
   `adb install -r` verify with `su -c '/data/adb/modules/zygisk_vector/cli modules ls'` (must say `enabled`)
@@ -546,12 +548,57 @@ button on `edge://extensions` is fallback.
     (`.chat-info .chat-title`, `.ChatInfo .ChatTitle`, …) never matched K,
     which is why every telegram web id had no slug. with both fixed the web
     id is `telegram_web_<dialogId>_<slug>` and the backend sibling rule fires.
-    **not yet verified in the browser**: the user's own blindspot rule went
-    host-level on `web.telegram.org` (from the android device) right after the
-    extension reload, so the new id could not be read back off a live page.
-    verify later by opening a telegram web chat and reading the panel header
-    (`Chat ID: telegram_web_<digits>_<slug>`) — the numbers must match
-    nagram's `telegram_android_<digits>_<slug>`.
+    **VERIFIED in the browser 2026-11-02** (extension 1.5.4, telegram web K):
+    the panel header read `ID: telegram_web_-3959088547_k7` for the k7 group
+    and `ID: telegram_web_8263142134_new_gmail_father` for a bot chat — the
+    numbers are the K `data-peer-id` (dialogId), so they line up with
+    nagram's `telegram_android_<digits>_<slug>`. the K chat list also serves
+    a 1:1 chat with a POSITIVE peer id (8263142134) — a group/channel has a
+    negative one and `isGroupThread()` treats those as rooms, so pick a
+    positive-id chat when a person link is needed.
+    K markup facts: the chat row still carries `chatlist-chat` (merged with
+    newer `row …` classes) and `data-peer-id`; the list VIRTUALISES, so a
+    background tab can report 0 `.chatlist-chat` nodes — poll with a retry
+    instead of trusting one read, and do not judge the selector from a 0.
+    `location.hash` does not change when a chat is opened by clicking a row
+    (the router rewrites it only on a deep link) — click the row, then read
+    `.chatlist-chat.active`.
+    blindspot note (the user's own blocker, do not touch its rules): the
+    `windows-android` ruleset in the relay had NO block rule for `/k/` any
+    more, but the desktop edge extension kept enforcing the OLD config until
+    the relay pumped the new one down (the sync tab has "Sync now"; the pump
+    pulls every minute). the rule that used to block it was
+    `action:block url:https://web.telegram.org/k/`. precedence, from
+    `extension/bg.js`: more specific wins (host label count, then path depth)
+    and on an exact tie a BLOCK beats an allow — so a plain
+    `allow:…/web.telegram.org/k` does NOT undo a block on `…/k/`; only the
+    `+` overrule band ("allow+") beats an ordinary rule. to block it again,
+    re-add `action:block url:https://web.telegram.org/k/` (or a host rule for
+    `web.telegram.org`); `web.telegram.org/a` has its own block rule and the
+    A client is not needed.
+  - **telegram drafts merge across clients — the sibling thread is ADOPTED**
+    (2026-11-02): resolving the person through the sibling was not enough.
+    the strip renders one merged draft list per person, and a draft only
+    shows up there when its thread id is one of the person's own thread ids.
+    the lookup-only sibling rule therefore left the person with ONE client
+    tag: the phone never saw the drafts the web saved, and the person head
+    counted 0 while the chat below it showed a draft (the client injects the
+    current chat's own drafts locally, so the row showed but the count and
+    the chips did not).
+    `backend/lib/people.ts` now ADOPTS the other client's thread id into the
+    person (`adoptSiblingThread`) when the sibling resolves. one link per
+    client+chat: a chat already linked under a different name slug (contact
+    renamed) keeps its existing link, so the strip lists it once.
+    verified on prod: person `telegram_android_8263142134_new_gmail_father`
+    → lookup `telegram_web_8263142134_new_gmail_father` → same person, now
+    holding BOTH ids, drafts map carrying the web draft; the web panel read
+    `1 draft · 1 app` + chip `TG 1 ×` (× unlinks the native id) and the
+    nagram panel showed the same head and the web draft as a TG foreign row.
+    module 1.4.4 fixes the phone-side duplicate: the android thread id has
+    no row of its own, so the own row is served from the sibling's row and
+    that sibling listed the same draft again — `mergedRows` now keeps the
+    first occurrence (own row wins; its edit/delete resolve the same row).
+    the test draft + test person were deleted after (1 person, 19 rows).
   - the backend sibling rule also accepts the no-slug form: `telegram_web_777000`
     (no name) resolves to the person linked as `telegram_android_777000_…`,
     while `telegram_web_7770001_x` (a longer number that shares the prefix)
@@ -561,7 +608,13 @@ button on `edge://extensions` is fallback.
   firestoreService, glitchdraft_shim.neonPickBySlug) — change one, change all.
 - verify: web — Edge with `--remote-debugging-port=9222
   --profile-directory=Default`, open a web.telegram.org chat, panel id starts
-  `telegram_web_`; android — open a nagram chat, lspd log shows
+  `telegram_web_`; the port is NOT 9222 in practice: the
+  `automata-private/microsoft.com/edge/remote-debug-allow.ps1` watcher picks a
+  free port and writes it to `<Edge User Data>/DevToolsActivePort` (line 1 =
+  port, line 2 = `/devtools/browser/<id>`). the http endpoints
+  (`/json/version`, `/json/list`) answer 404 there — build
+  `BU_CDP_WS=ws://127.0.0.1:<port>/devtools/browser/<id>` from that file.
+  android — open a nagram chat, lspd log shows
   `TG chat dialogId=<n> title='…' → telegram_android_<n>_<slug>`, panel header
   matches, save a draft, confirm the backend row + slug-pick round-trip. delete
   any test row after (`exists:false` again).
