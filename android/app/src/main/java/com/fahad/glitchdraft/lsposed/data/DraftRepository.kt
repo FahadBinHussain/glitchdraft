@@ -470,11 +470,23 @@ class DraftRepository(private val context: Context) {
         val threadIds: List<String> get() = threads.map { it.threadId }
     }
 
+    /** An existing person the current chat can be linked INTO (picker People
+     *  section): "this chat is actually that person". The other direction from
+     *  candidates, which add a thread to THIS chat's person. */
+    data class LinkablePerson(
+        val id: String,
+        val displayName: String,
+        val platforms: List<String>,
+        val threadCount: Int,
+        val score: Int
+    )
+
     /** One lookup: the person may be absent (nothing linked yet) while the
      *  link picker still has every unlinked thread to offer. */
     data class PersonLookup(
         val person: PersonInfo?,
-        val candidates: List<PersonCandidate>
+        val candidates: List<PersonCandidate>,
+        val linkablePeople: List<LinkablePerson>
     )
 
     private fun requireNeon(): StorageConfig.Neon = when (val cfg = readConfig()) {
@@ -600,6 +612,35 @@ class DraftRepository(private val context: Context) {
             }
         }
 
+        // People section: existing persons this chat can join. The own person is
+        // already excluded by the backend - the strip is anchored on it.
+        val linkable = mutableListOf<LinkablePerson>()
+        val linkableRows = json.optJSONArray("linkablePeople")
+        if (linkableRows != null) {
+            for (i in 0 until linkableRows.length()) {
+                val item = linkableRows.optJSONObject(i) ?: continue
+                val id = item.optString("id")
+                if (id.isBlank()) continue
+                val platforms = mutableListOf<String>()
+                val platformRows = item.optJSONArray("platforms")
+                if (platformRows != null) {
+                    for (j in 0 until platformRows.length()) {
+                        val platform = platformRows.optString(j)
+                        if (platform.isNotBlank()) platforms.add(platform)
+                    }
+                }
+                linkable.add(
+                    LinkablePerson(
+                        id = id,
+                        displayName = item.optString("displayName"),
+                        platforms = platforms,
+                        threadCount = item.optInt("threadCount", 0),
+                        score = item.optInt("score", 0)
+                    )
+                )
+            }
+        }
+
         PersonLookup(
             person = person?.let {
                 PersonInfo(
@@ -609,7 +650,8 @@ class DraftRepository(private val context: Context) {
                     candidates = candidates
                 )
             },
-            candidates = candidates
+            candidates = candidates,
+            linkablePeople = linkable
         )
     }
 
@@ -625,16 +667,25 @@ class DraftRepository(private val context: Context) {
             json.optJSONObject("person")?.optString("id").orEmpty()
         }
 
-    /** POST /api/people/links — attach another platform identity to the person. */
-    suspend fun linkThread(personId: String, threadId: String) = withContext(Dispatchers.IO) {
-        val cfg = requireNeon()
-        val body = JSONObject().apply {
-            put("personId", personId)
-            put("threadId", threadId)
+    /**
+     * POST /api/people/links — attach another platform identity to the person.
+     *
+     * `move` re-points a thread that is already linked elsewhere (the "this
+     * chat belongs to that person" correction from the picker's People
+     * section); the backend drops the old link and deletes the old person
+     * when it is left with no links. Without it a taken thread id answers 409.
+     */
+    suspend fun linkThread(personId: String, threadId: String, move: Boolean = false) =
+        withContext(Dispatchers.IO) {
+            val cfg = requireNeon()
+            val body = JSONObject().apply {
+                put("personId", personId)
+                put("threadId", threadId)
+                if (move) put("move", true)
+            }
+            peopleCall(cfg, "/api/people/links", "POST", body)
+            Unit
         }
-        peopleCall(cfg, "/api/people/links", "POST", body)
-        Unit
-    }
 
     /** DELETE /api/people/links?threadId= — drops the link, drafts stay saved. */
     suspend fun unlinkThread(threadId: String) = withContext(Dispatchers.IO) {

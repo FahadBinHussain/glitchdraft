@@ -561,6 +561,12 @@
         text-align: center;
     }
 
+    .gd-cand-badges {
+        display: flex;
+        gap: 3px;
+        align-items: flex-start;
+    }
+
     .gd-cand-main {
         flex: 1;
         min-width: 0;
@@ -2408,6 +2414,7 @@
     let currentPerson = null;
     let personDrafts = {};      // threadId -> { messages, contactName, lastModified }
     let personCandidates = [];  // every unlinked thread, score-ranked
+    let personLinkable = [];    // existing people this chat can join ("this chat is theirs")
     let personFilter = 'all';   // 'all' | platform key
     let personLookupError = null;
     let personCache = null;     // { chatId, at, person, drafts, candidates }
@@ -2472,6 +2479,7 @@
                     person: response.person || null,
                     drafts: response.drafts || {},
                     candidates: response.candidates || [],
+                    linkablePeople: response.linkablePeople || [],
                     error: null
                 };
                 callback(personCache);
@@ -2761,10 +2769,11 @@
     function renderCandidateList(list, response) {
         list.innerHTML = '';
         const candidates = response.candidates || [];
+        const linkable = response.linkablePeople || [];
         const scored = candidates.filter((candidate) => candidate.score > 0);
         const rest = candidates.filter((candidate) => candidate.score <= 0);
 
-        if (candidates.length === 0) {
+        if (candidates.length === 0 && linkable.length === 0) {
             list.innerHTML = '<div class="gd-sheet-sub">No other threads found. Save a draft in another app first.</div>';
             return;
         }
@@ -2804,6 +2813,49 @@
             list.appendChild(row);
         };
 
+        // People first: "this chat is actually that person". The backend
+        // excludes the chat's own person, so every row here is a different
+        // person - tapping moves this chat's link when it has one.
+        if (linkable.length > 0) {
+            const sub = document.createElement('div');
+            sub.className = 'gd-sheet-sub';
+            sub.textContent = 'People - tap to make this chat theirs';
+            list.appendChild(sub);
+            linkable.forEach((person) => {
+                const row = document.createElement('div');
+                row.className = 'gd-cand';
+                row.dataset.savedMessageUiElement = 'true';
+                row.title = person.id;
+
+                const badges = document.createElement('span');
+                badges.className = 'gd-cand-badges';
+                person.platforms.slice(0, 3).forEach((platform) => {
+                    const chip = document.createElement('span');
+                    chip.className = 'gd-cand-badge';
+                    chip.textContent = platformLabel(platform);
+                    badges.appendChild(chip);
+                });
+
+                const main = document.createElement('div');
+                main.className = 'gd-cand-main';
+                const name = document.createElement('div');
+                name.className = 'gd-cand-name';
+                name.textContent = person.displayName;
+                main.appendChild(name);
+
+                const hint = document.createElement('span');
+                hint.className = 'gd-cand-hint';
+                hint.textContent = `${person.threadCount} thread${person.threadCount === 1 ? '' : 's'}`;
+
+                row.appendChild(badges);
+                row.appendChild(main);
+                row.appendChild(hint);
+                row.onclick = () => linkChatToPerson(person);
+                list.appendChild(row);
+            });
+        }
+
+        // Threads next: "add that thread to this chat's person".
         if (scored.length > 0) {
             const sub = document.createElement('div');
             sub.className = 'gd-sheet-sub';
@@ -2861,6 +2913,32 @@
         });
     }
 
+    // People-section tap: THIS CHAT joins the picked person. The link moves
+    // when the chat is already linked to someone else (the tap is the
+    // confirmation, same rule as the thread rows).
+    function linkChatToPerson(person) {
+        const chatId = getCurrentChatId();
+        if (!chatId) return;
+        const move = !!currentPerson && currentPerson.id !== person.id;
+
+        chrome.runtime.sendMessage(
+            { action: 'linkThread', personId: person.id, chatId: chatId, move },
+            (response) => {
+                if (!response || !response.success) {
+                    showNotification('Link failed: ' + ((response && response.message) || 'unknown error'));
+                    return;
+                }
+                closeLinkPicker();
+                showNotification(
+                    (move ? 'Moved this chat to ' : 'Linked this chat to ') + person.displayName
+                );
+                invalidatePersonCache();
+                personFilter = 'all';
+                loadSavedMessages();
+            }
+        );
+    }
+
     function openLinkPicker() {
         const chatId = getCurrentChatId();
         if (!chatId) return;
@@ -2908,6 +2986,7 @@
                     return;
                 }
                 personCandidates = response.candidates || [];
+                personLinkable = response.linkablePeople || [];
                 renderCandidateList(list, response);
             }
         );
@@ -2992,6 +3071,7 @@
                 currentPerson = cache.person;
                 personDrafts = cache.drafts || {};
                 personCandidates = cache.candidates || [];
+                personLinkable = cache.linkablePeople || [];
                 personLookupError = cache.error || null;
                 // the current chat's own row is always the freshest GET, not
                 // the 60s person cache

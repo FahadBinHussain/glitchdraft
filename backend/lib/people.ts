@@ -23,6 +23,15 @@ export type Suggestion = {
   lastModified: number;
 };
 
+/** An existing person the current chat can be linked INTO (picker People section). */
+export type LinkablePerson = {
+  id: string;
+  displayName: string;
+  platforms: string[];
+  threadCount: number;
+  score: number;
+};
+
 /**
  * Mirror of sanitizeNameSlug in extension/content.js - the same slug is baked
  * into every thread id, so suggestions compare like for like.
@@ -285,10 +294,24 @@ export async function createPerson(
   };
 }
 
+/**
+ * Link a thread to a person.
+ *
+ * `move` handles the "this chat belongs to that person, not the one it is
+ * linked to" correction: the thread is re-pointed at `personId` and the old
+ * person row is deleted when it is left with zero links (an empty person is
+ * invisible in the strip but would still list in GET /api/people). Without
+ * `move` a taken thread id still answers 409 - a read path must never move
+ * another chat's link by accident.
+ */
 export async function linkThread(
   personId: string,
-  threadId: string
-): Promise<{ ok: true; person: PersonPayload } | { ok: false; code: "missing" | "taken"; personId?: string }> {
+  threadId: string,
+  move = false
+): Promise<
+  | { ok: true; person: PersonPayload; movedFrom?: string }
+  | { ok: false; code: "missing" | "taken"; personId?: string }
+> {
   const target = await personById(personId);
   if (!target) return { ok: false, code: "missing" };
 
@@ -299,14 +322,26 @@ export async function linkThread(
     .limit(1);
   const existing = current[0];
   if (existing && existing.personId !== personId) {
-    return { ok: false, code: "taken", personId: existing.personId };
+    if (!move) return { ok: false, code: "taken", personId: existing.personId };
+    await db.delete(personLinks).where(eq(personLinks.threadId, threadId));
+    const remaining = await db
+      .select()
+      .from(personLinks)
+      .where(eq(personLinks.personId, existing.personId));
+    if (remaining.length === 0) {
+      await db.delete(people).where(eq(people.id, existing.personId));
+    }
   }
-  if (!existing) {
-    await db.insert(personLinks).values({ personId, threadId });
+  if (!existing || existing.personId !== personId) {
+    await db.insert(personLinks).values({ personId, threadId }).onConflictDoNothing();
   }
   const person = await personById(personId);
   if (!person) return { ok: false, code: "missing" };
-  return { ok: true, person };
+  return {
+    ok: true,
+    person,
+    movedFrom: existing && existing.personId !== personId ? existing.personId : undefined
+  };
 }
 
 export async function unlinkThread(threadId: string): Promise<boolean> {
@@ -391,5 +426,65 @@ export async function candidatesFor(
 
   return scored
     .sort((a, b) => b.score - a.score || b.lastModified - a.lastModified)
+    .slice(0, 200);
+}
+
+/**
+ * The picker's People section: every existing person this chat can be linked
+ * INTO ("this chat is actually that person"). This is the flow a linked person
+ * was missing - candidatesFor only ever offers threads with no link, so once
+ * Cat Fren had links there was no row anywhere that said "make this chat
+ * hers", even though a person can hold any number of threads (same platform
+ * included).
+ *
+ * `ownPerson` (already resolved by the caller) is excluded: picking it again
+ * is a no-op and the strip is already anchored on it. `move` on the link call
+ * handles the "linked to the wrong person" case - the chat is re-pointed, and
+ * the old person is deleted when left with no links.
+ */
+export async function linkablePeople(
+  threadId: string,
+  liveName: string | null,
+  ownPerson: PersonPayload | null
+): Promise<LinkablePerson[]> {
+  const [peopleRows, linkRows, draftRows] = await Promise.all([
+    db.select().from(people),
+    db.select().from(personLinks),
+    db.select({ threadId: drafts.threadId, contactName: drafts.contactName }).from(drafts)
+  ]);
+
+  const current = draftRows.find((row) => row.threadId === threadId);
+  const targetName = (liveName || current?.contactName || "").trim() || slugFromThreadId(threadId);
+  const targetSlug = slugify(targetName);
+
+  const byPerson = new Map<string, string[]>();
+  for (const link of linkRows) {
+    const list = byPerson.get(link.personId) ?? [];
+    list.push(link.threadId);
+    byPerson.set(link.personId, list);
+  }
+
+  const out: LinkablePerson[] = [];
+  for (const person of peopleRows) {
+    if (ownPerson && person.id === ownPerson.id) continue;
+    const threadIds = byPerson.get(person.id) ?? [];
+    if (threadIds.length === 0) continue;
+    const platforms = Array.from(new Set(threadIds.map((id) => platformOf(id)))).sort();
+    out.push({
+      id: person.id,
+      displayName: person.displayName,
+      platforms,
+      threadCount: threadIds.length,
+      score: scoreSlug(targetSlug, slugify(person.displayName))
+    });
+  }
+
+  return out
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        b.threadCount - a.threadCount ||
+        a.displayName.localeCompare(b.displayName)
+    )
     .slice(0, 200);
 }

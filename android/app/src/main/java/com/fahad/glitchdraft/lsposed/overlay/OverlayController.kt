@@ -178,6 +178,7 @@ object OverlayController {
     private var bodyFrame: FrameLayout? = null
     private var currentPerson: DraftRepository.PersonInfo? = null
     private var personCandidates: List<DraftRepository.PersonCandidate> = emptyList()
+    private var personLinkable: List<DraftRepository.LinkablePerson> = emptyList()
     private var personLookupError: String? = null
     private var personFilter: String = "all"        // "all" | platform key
 
@@ -187,6 +188,7 @@ object OverlayController {
         val drafts: List<DraftRepository.Draft>,
         val person: DraftRepository.PersonInfo?,
         val candidates: List<DraftRepository.PersonCandidate>,
+        val linkablePeople: List<DraftRepository.LinkablePerson>,
         val personError: String?
     )
 
@@ -789,7 +791,7 @@ object OverlayController {
         chatId: String
     ): PanelState {
         val drafts = r.getDraft(chatId)
-        var lookup = DraftRepository.PersonLookup(null, emptyList())
+        var lookup = DraftRepository.PersonLookup(null, emptyList(), emptyList())
         var error: String? = null
         try {
             lookup = r.getPerson(chatId, _currentChatName)
@@ -797,11 +799,11 @@ object OverlayController {
         } catch (e: Throwable) {
             // loud, never silent: the strip shows the failure instead of
             // pretending this chat has no person
-            lookup = DraftRepository.PersonLookup(null, emptyList())
+            lookup = DraftRepository.PersonLookup(null, emptyList(), emptyList())
             error = e.message ?: e.toString()
             XposedBridge.log("$TAG: people lookup failed for $chatId: $error")
         }
-        return PanelState(drafts, lookup.person, lookup.candidates, error)
+        return PanelState(drafts, lookup.person, lookup.candidates, lookup.linkablePeople, error)
     }
 
     // sync-tick fetch: never clears first, re-renders only when server content
@@ -822,6 +824,7 @@ object OverlayController {
     private fun applyPanelState(state: PanelState, chatId: String, r: DraftRepository) {
         currentPerson = state.person
         personCandidates = state.candidates
+        personLinkable = state.linkablePeople
         personLookupError = state.personError
         if (state.person == null) personFilter = "all"
         renderPersonStrip()
@@ -2086,7 +2089,8 @@ object OverlayController {
         ))
 
         val candidates = personCandidates
-        if (candidates.isEmpty()) {
+        val linkable = personLinkable
+        if (candidates.isEmpty() && linkable.isEmpty()) {
             sheet.addView(TextView(ctx).apply {
                 text = "No other threads found. Save a draft in another app first."
                 setTextColor(GREY_TXT)
@@ -2094,10 +2098,31 @@ object OverlayController {
                 setPadding(0, dp(ctx, 8), 0, dp(ctx, 8))
             })
         } else {
-            // name-similar threads first, then the rest — a suggestion is never
-            // written on its own, the tap is the confirmation
-            val ranked = candidates.sortedByDescending { it.score }
-            ranked.forEach { candidate -> sheet.addView(makeCandidateRow(ctx, candidate)) }
+            // People first: "this chat is that person". The own person is
+            // excluded by the backend, so every row here is a different person.
+            if (linkable.isNotEmpty()) {
+                sheet.addView(TextView(ctx).apply {
+                    text = "People - tap to make this chat theirs"
+                    setTextColor(GREY_TXT)
+                    textSize = 10f
+                    setPadding(0, dp(ctx, 4), 0, dp(ctx, 2))
+                })
+                linkable.sortedByDescending { it.score }
+                    .forEach { person -> sheet.addView(makePersonRow(ctx, person)) }
+            }
+            // Threads next: "add that thread to this chat's person" - a
+            // suggestion is never written on its own, the tap is the confirmation
+            if (candidates.isNotEmpty()) {
+                sheet.addView(TextView(ctx).apply {
+                    text = "Threads - tap to add to " +
+                        (currentPerson?.displayName ?: _currentChatName ?: "this chat")
+                    setTextColor(GREY_TXT)
+                    textSize = 10f
+                    setPadding(0, dp(ctx, 6), 0, dp(ctx, 2))
+                })
+                val ranked = candidates.sortedByDescending { it.score }
+                ranked.forEach { candidate -> sheet.addView(makeCandidateRow(ctx, candidate)) }
+            }
         }
 
         sheet.addView(TextView(ctx).apply {
@@ -2190,9 +2215,94 @@ object OverlayController {
         return row
     }
 
+    /** A People-section row: platform chips + the person's name + thread count.
+     *  Tapping links THIS CHAT into that person (moving it when it is already
+     *  linked to someone else). */
+    private fun makePersonRow(
+        ctx: Context,
+        person: DraftRepository.LinkablePerson
+    ): View {
+        val row = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(ctx, 6), 0, dp(ctx, 6))
+            contentDescription = "Link this chat to ${person.displayName}"
+        }
+        val chips = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
+        person.platforms.take(3).forEach { platform ->
+            chips.addView(TextView(ctx).apply {
+                text = platformLabel(platform)
+                textSize = 9f
+                setTextColor(WHITE)
+                setPadding(dp(ctx, 5), dp(ctx, 2), dp(ctx, 5), dp(ctx, 2))
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    setColor(ACCENT)
+                    cornerRadius = dp(ctx, 3).toFloat()
+                }
+            }, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.rightMargin = dp(ctx, 3) })
+        }
+        row.addView(chips, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        row.addView(TextView(ctx).apply {
+            text = person.displayName
+            textSize = 12f
+            setTextColor(Color.BLACK)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            .also { it.leftMargin = dp(ctx, 7) })
+
+        row.addView(TextView(ctx).apply {
+            text = "${person.threadCount} thread${if (person.threadCount == 1) "" else "s"}"
+            textSize = 9f
+            setTextColor(GREY_TXT)
+            setPadding(dp(ctx, 4), 0, 0, 0)
+        }, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ))
+
+        row.setOnClickListener { linkChatToPerson(person) }
+        return row
+    }
+
     private fun closeLinkPicker() {
         personSheetScroll?.visibility = View.GONE
         personSheet?.visibility = View.GONE
+    }
+
+    /** People-section tap: link THIS CHAT into the picked person. When the chat
+     *  is already linked to someone else the link moves (move=true) - the tap
+     *  is the confirmation, same rule as the thread rows. */
+    private fun linkChatToPerson(person: DraftRepository.LinkablePerson) {
+        val r = repo ?: return
+        val chatId = currentChatId() ?: currentPackage
+        val ctx = panelView?.context ?: return
+        val move = currentPerson != null && currentPerson?.id != person.id
+
+        scope.launch {
+            try {
+                r.linkThread(person.id, chatId, move = move)
+                Handler(Looper.getMainLooper()).post {
+                    closeLinkPicker()
+                    Toast.makeText(
+                        ctx,
+                        (if (move) "Moved this chat to " else "Linked this chat to ") +
+                            person.displayName,
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    loadDrafts()
+                }
+            } catch (e: Throwable) {
+                Handler(Looper.getMainLooper()).post {
+                    Toast.makeText(ctx, "Link failed: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 
     /** Manual + confirmed: tapping a candidate is the confirmation, a name match
@@ -2276,6 +2386,7 @@ object OverlayController {
         // strip never shows another chat's person while the lookup runs
         currentPerson = null
         personCandidates = emptyList()
+        personLinkable = emptyList()
         personLookupError = null
         personFilter = "all"
         closeLinkPicker()

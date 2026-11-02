@@ -46,12 +46,13 @@ button on `edge://extensions` is fallback.
   MainActivity), `android:build:release`, `android:release:apk`. all three go
   through `tools/android.ps1`, which picks a JDK 21 (app/build.gradle pins
   source/target/jvmTarget to 21) and prints which one it used.
-  versionName is **1.4.4** (1.4.1 is the egress fix, `?meta=1` on the
+  versionName is **1.4.5** (1.4.1 is the egress fix, `?meta=1` on the
   slug-pick list; 1.4.2 moved overlay icon positions per-app; 1.4.3 resolves
   the person by slug when the android thread id misses — see the android
   thread-id drift bullet below; 1.4.4 drops a draft that would be listed
   twice once the telegram sibling thread is linked to the same person — see
-  the telegram cross-client bullet below). `./gradlew
+  the telegram cross-client bullet below; 1.4.5 adds the picker People
+  section + move-link). `./gradlew
   assembleDebug assembleRelease` from `android/` works too — the committed
   wrapper + Temurin 21 on PATH are enough, no need for the pwsh helper. after
   `adb install -r` verify with `su -c '/data/adb/modules/zygisk_vector/cli modules ls'` (must say `enabled`)
@@ -641,6 +642,33 @@ button on `edge://extensions` is fallback.
   its own, because names collide across platforms and a wrong merge would show
   someone else's drafts. the picker returns *every* unlinked thread with the
   scored ones pinned on top, so links still work when the names differ wildly.
+- **the picker has TWO directions** (added 2026-11-02, extension 1.5.5, module
+  1.4.5): a thread belongs to one person, but a person can hold any number of
+  threads — same platform included (Cat Fren holds 3 messenger ids + 1 ig). the
+  old picker only listed *unlinked* threads and every tap meant "add that
+  thread to THIS chat's person", so there was no way to say "this chat is
+  actually Cat Fren" once she had links: she (and every linked person) simply
+  never appeared. now:
+  1. **People** section (top) — `linkablePeople` in `lib/people.ts`: every
+     existing person EXCEPT the chat's own (resolved via `personForThread`, so
+     the telegram sibling rule applies). tap = link THIS CHAT into that person.
+     `POST /api/people/links { move: true }` re-points a chat that is already
+     linked elsewhere and **deletes the old person when it is left with zero
+     links** (an empty person is invisible in the strip but lists in
+     `GET /api/people`). without `move` a taken thread id still answers 409 —
+     a read path must never move another chat's link by accident.
+  2. **Threads** section (below) — the old behaviour: tap adds that thread to
+     this chat's person.
+  both pickers say which is which (`People - tap to make this chat theirs` /
+  `Threads - tap to add to <name>`); web renders the People rows with one
+  platform chip per platform + `N threads`, android the same via
+  `makePersonRow`. `LinkablePerson` = `{id, displayName, platforms,
+  threadCount, score}`; score is the same `scoreSlug` against the live chat
+  name so the relevant person sorts first. verified live 2026-11-02 (web):
+  People section listed Cat Fren (IG+MSGR, 4 threads), tap linked the Fahad Er
+  Grp chat into her (5 links), strip repainted with chips; the test link was
+  removed after. android compiled + installed (1.4.5) but the on-device tap was
+  not exercised that day — verify with the same steps on the phone.
 - picker candidates exclude rooms, not people: telegram group/channel dialogs
   (negative ids) and discord guild channels `discord_<guildId>_<channelId>`. only
   `discord_com_channels__me_<id>` (DMs) count. unknown platforms are skipped

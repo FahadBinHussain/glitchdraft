@@ -5,6 +5,7 @@ import {
   createPerson,
   deletePerson,
   draftsByIds,
+  linkablePeople,
   listPeople,
   personForThread,
   platformOf
@@ -31,6 +32,7 @@ export async function GET(req: NextRequest) {
   const person = await personForThread(threadId);
   const drafts = await draftsByIds(person?.threadIds ?? []);
   const candidates = await candidatesFor(threadId, req.nextUrl.searchParams.get("name"));
+  const linkable = await linkablePeople(threadId, req.nextUrl.searchParams.get("name"), person);
 
   return NextResponse.json({
     success: true,
@@ -41,7 +43,10 @@ export async function GET(req: NextRequest) {
     // scored subset = the name-similarity suggestions; candidates = every
     // unlinked thread so manual linking still works across different names
     suggestions: candidates.filter((candidate) => candidate.score > 0).slice(0, 12),
-    candidates
+    candidates,
+    // existing people this chat can join ("this chat is that person") - the
+    // other direction from candidates, which add a thread to THIS chat's person
+    linkablePeople: linkable
   });
 }
 

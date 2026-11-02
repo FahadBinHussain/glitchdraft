@@ -13,6 +13,7 @@ export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as {
     personId?: string;
     threadId?: string;
+    move?: boolean;
   };
   const personId = (body.personId ?? "").trim();
   const threadId = (body.threadId ?? "").trim();
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const result = await linkThread(personId, threadId);
+  const result = await linkThread(personId, threadId, body.move === true);
   if (!result.ok) {
     if (result.code === "missing") {
       return NextResponse.json(
@@ -42,7 +43,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  return NextResponse.json({ success: true, person: result.person });
+  return NextResponse.json({
+    success: true,
+    person: result.person,
+    movedFrom: result.movedFrom
+  });
 }
 
 /** DELETE /api/people/links?threadId=<id> - unlink one platform identity. */

@@ -96,7 +96,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
     }
     if (request.action === "linkThread") {
-        handleLinkThread(request.personId, request.chatId).then(sendResponse);
+        handleLinkThread(request.personId, request.chatId, request.move === true).then(sendResponse);
         return true;
     }
     if (request.action === "unlinkThread") {
@@ -270,11 +270,11 @@ async function handleCreatePerson(chatId, displayName) {
     }
 }
 
-async function handleLinkThread(personId, chatId) {
+async function handleLinkThread(personId, chatId, move) {
     try {
         const service = await requireNeonService();
-        const result = await service.linkThread(personId, chatId);
-        return { success: true, person: result.person };
+        const result = await service.linkThread(personId, chatId, move);
+        return { success: true, person: result.person, movedFrom: result.movedFrom };
     } catch (error) {
         return { success: false, message: error.message };
     }

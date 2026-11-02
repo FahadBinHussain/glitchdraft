@@ -186,10 +186,10 @@ class NeonService {
         });
     }
 
-    async linkThread(personId, threadId) {
+    async linkThread(personId, threadId, move = false) {
         return this.request("/api/people/links", {
             method: "POST",
-            body: JSON.stringify({ personId, threadId })
+            body: JSON.stringify({ personId, threadId, move })
         });
     }
 
