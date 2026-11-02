@@ -184,10 +184,32 @@ export async function personForThread(threadId: string): Promise<PersonPayload |
       .from(personLinks)
       .where(sql`starts_with(${personLinks.threadId}, ${sibling})`);
     const hit = rows.find((row) => isTelegramBaseOrSlug(row.threadId, sibling));
-    if (hit) return personById(hit.personId);
+    if (hit) {
+      await adoptSiblingThread(hit.personId, threadId);
+      return personById(hit.personId);
+    }
   }
 
   return null;
+}
+
+/**
+ * Adopt the other client's thread id into the person this chat already belongs
+ * to. One telegram chat has two client thread ids (telegram_web_… and
+ * telegram_android_…, same numeric dialog id) and the strip renders one
+ * merged draft list per person - a draft only shows up there when its thread
+ * id is one of the person's own thread ids. Without this the phone never saw
+ * the drafts the web saved and the person head counted 0 while the chat
+ * below it showed a draft.
+ *
+ * The link is safe to write on a lookup: the chat is provably the same one
+ * (same numeric dialog id), and the row is skipped when that thread id is
+ * already linked to someone else.
+ */
+async function adoptSiblingThread(personId: string, threadId: string): Promise<void> {
+  const existing = await linkForThread(threadId);
+  if (existing) return;
+  await db.insert(personLinks).values({ personId, threadId }).onConflictDoNothing();
 }
 
 async function linkForThread(threadId: string) {
