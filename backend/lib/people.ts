@@ -71,14 +71,20 @@ function slugFromThreadId(threadId: string): string {
  * dialogId. The thread id still carries the client tag though
  * (telegram_web_… vs telegram_android_…), and person_links is keyed by the
  * FULL thread id, so a person linked on the phone was invisible on
- * web.telegram.org and the other way round. Return the sibling prefix so a
- * lookup can fall back to it.
+ * web.telegram.org and the other way round. Return the sibling base so a
+ * lookup can fall back to it. The base carries no trailing underscore: a
+ * telegram id may have no name slug at all (telegram_web_777000).
  */
 export function telegramClientSibling(threadId: string): string | null {
-  const match = /^telegram_(web|android)_(-?\d+)_/.exec(threadId);
+  const match = /^telegram_(web|android)_(-?\d+)(?:_|$)/.exec(threadId);
   if (!match) return null;
   const other = match[1] === "web" ? "android" : "web";
-  return `telegram_${other}_${match[2]}_`;
+  return `telegram_${other}_${match[2]}`;
+}
+
+/** Exact match or the same base plus a name slug (never a longer number). */
+function isTelegramBaseOrSlug(threadId: string, base: string): boolean {
+  return threadId === base || threadId.startsWith(`${base}_`);
 }
 
 function plainText(html: string, max = 70): string {
@@ -176,9 +182,8 @@ export async function personForThread(threadId: string): Promise<PersonPayload |
     const rows = await db
       .select()
       .from(personLinks)
-      .where(sql`starts_with(${personLinks.threadId}, ${sibling})`)
-      .limit(1);
-    const hit = rows[0];
+      .where(sql`starts_with(${personLinks.threadId}, ${sibling})`);
+    const hit = rows.find((row) => isTelegramBaseOrSlug(row.threadId, sibling));
     if (hit) return personById(hit.personId);
   }
 
@@ -324,7 +329,7 @@ export async function candidatesFor(
   const scored: Suggestion[] = [];
   for (const row of draftRows) {
     if (row.threadId === threadId || linked.has(row.threadId) || isGroupThread(row.threadId)) continue;
-    if (linkedTelegramSiblings.some((prefix) => row.threadId.startsWith(prefix))) continue;
+    if (linkedTelegramSiblings.some((base) => isTelegramBaseOrSlug(row.threadId, base))) continue;
     if (!PERSON_PLATFORMS.has(platformOf(row.threadId))) continue;
     const name = (row.contactName || "").trim() || slugFromThreadId(row.threadId);
     const score = scoreSlug(targetSlug, slugify(name));

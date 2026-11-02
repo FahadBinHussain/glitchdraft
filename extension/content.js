@@ -900,16 +900,24 @@
         // numeric spaces differ from the android ChatActivity.chatId, so
         // cross-device matching rides the name slug like the others.
         if (url.includes('web.telegram.org')) {
+            // The url hash is a USERNAME for most peers (#@name), but the native
+            // app's dialogId is numeric - and telegram web puts exactly that
+            // number in the active chat row's data-peer-id. Prefer it, so the
+            // web id and the native id line up (telegram_web_<dialogId>_<slug>
+            // == telegram_android_<dialogId>_<slug>) and one person merges
+            // across both clients. Fall back to the hash key when the chat is
+            // not in the list (deep link) - that is a username key, which the
+            // backend sibling rule simply will not match.
+            const peerId = document.querySelector('.chatlist-chat.active')?.getAttribute('data-peer-id');
             const raw = decodeURIComponent((window.location.hash || '').slice(1));
-            if (raw) {
-                const cForm = raw.match(/^c(\d+)/);
-                const numeric = cForm ? `-100${cForm[1]}` : (raw.match(/^(-?\d+)/) || [])[1];
-                const key = numeric || (raw.startsWith('@') ? raw.slice(1).replace(/_/g, '-') : null);
-                if (key) {
-                    const name = getCurrentChatName();
-                    const nameSlug = name ? sanitizeNameSlug(name) : null;
-                    return nameSlug ? `telegram_web_${key}_${nameSlug}` : `telegram_web_${key}`;
-                }
+            const cForm = raw.match(/^c(\d+)/);
+            const hashNumeric = cForm ? `-100${cForm[1]}` : (raw.match(/^(-?\d+)/) || [])[1];
+            const hashKey = hashNumeric || (raw.startsWith('@') ? raw.slice(1).replace(/_/g, '-') : null);
+            const key = peerId || hashKey;
+            if (key) {
+                const name = getCurrentChatName();
+                const nameSlug = name ? sanitizeNameSlug(name) : null;
+                return nameSlug ? `telegram_web_${key}_${nameSlug}` : `telegram_web_${key}`;
             }
             return null; // no chat open — never fall through to the url sanitizer
         }
@@ -1013,7 +1021,8 @@
         // ── Telegram Web (k + a versions) ──
         if (url.includes('web.telegram.org')) {
             const selectors = [
-                '.chat-info .chat-title',        // k version header title
+                '.chat-info .peer-title',       // k version header title
+                '.chat-info .chat-title',        // k version header title (older build)
                 '.chat-info-container .chat-title',
                 '.ChatInfo .ChatTitle',
                 '.title-wrapper .title',         // a version header title

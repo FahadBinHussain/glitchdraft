@@ -530,6 +530,32 @@ button on `edge://extensions` is fallback.
     listed 0 `telegram_web_*` candidates. the test person was deleted after.
     messenger/instagram still need the NAME-slug bridge (their web and android
     numeric ids are different id spaces) — see the thread-id drift bullet above.
+  - **telegram web ids must come from the DOM, not the url hash** (2026-11-01,
+    extension 1.5.4): telegram web K puts a USERNAME in the hash for most peers
+    (`#@zq7kv9xh2`), so the old hash-only id was `telegram_web_zq7kv9xh2` — no
+    numeric id and no name slug — while nagram's id for the same chat is
+    `telegram_android_<dialogId>_<slug>`. the two never matched, and the
+    slug-pick anchor (`…_-?\d+_<slug>$`) cannot match a username key either,
+    so a telegram web row could never be bridged to anything. the K layout does
+    keep the numeric peer id in the DOM: the active chat row carries
+    `data-peer-id` (`.chatlist-chat.active`), and that number is exactly what
+    the native app calls the dialogId. the extension now prefers it over the
+    hash, and falls back to the hash key when the chat is not in the list (deep
+    link). the header title in K is `.chat-info .peer-title` (the chat LIST
+    uses the same class, so scope it to the header); the old selectors
+    (`.chat-info .chat-title`, `.ChatInfo .ChatTitle`, …) never matched K,
+    which is why every telegram web id had no slug. with both fixed the web
+    id is `telegram_web_<dialogId>_<slug>` and the backend sibling rule fires.
+    **not yet verified in the browser**: the user's own blindspot rule went
+    host-level on `web.telegram.org` (from the android device) right after the
+    extension reload, so the new id could not be read back off a live page.
+    verify later by opening a telegram web chat and reading the panel header
+    (`Chat ID: telegram_web_<digits>_<slug>`) — the numbers must match
+    nagram's `telegram_android_<digits>_<slug>`.
+  - the backend sibling rule also accepts the no-slug form: `telegram_web_777000`
+    (no name) resolves to the person linked as `telegram_android_777000_…`,
+    while `telegram_web_7770001_x` (a longer number that shares the prefix)
+    does NOT — the match is base-or-base+`_`, never a bare prefix.
 - slug-pick anchors now `^(messenger|instagram|telegram)_(web|android)_-?\d+_<slug>$`
   in all four implementations (DraftRepository.pickBestRow, neonService,
   firestoreService, glitchdraft_shim.neonPickBySlug) — change one, change all.
