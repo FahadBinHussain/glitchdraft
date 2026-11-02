@@ -850,17 +850,29 @@ object OverlayController {
 
     /** Own chat's drafts plus every other thread the person owns, newest first.
      *  Identity (own vs foreign) rides on the slug-less thread key: the slug
-     *  rides on the live display name and can differ from the linked id. */
+     *  rides on the live display name and can differ from the linked id.
+     *
+     *  A draft can show up twice: the android thread id has no row of its own
+     *  (the same conversation in another client carries the row), so the own
+     *  row is served from that row - and that thread then lists the same draft
+     *  again as a foreign row. The first one wins; the actions on it address
+     *  the row the draft really lives in (save/delete resolve the same row). */
     private fun mergedRows(state: PanelState, chatId: String): List<MergedDraft> {
         val person = state.person ?: run {
             return state.drafts.map { MergedDraft(chatId, null, foreign = false, draft = it) }
         }
         val ownKey = threadKey(chatId)
-        return person.threads.flatMap { thread ->
+        val seen = mutableSetOf<String>()
+        val rows = mutableListOf<MergedDraft>()
+        for (thread in person.threads) {
             val own = threadKey(thread.threadId) == ownKey
             val drafts = if (own) state.drafts else thread.drafts
-            drafts.map { MergedDraft(thread.threadId, thread.contactName, foreign = !own, draft = it) }
-        }.sortedByDescending { it.draft.timestamp }
+            for (draft in drafts) {
+                if (!seen.add(draft.timestamp.toString() + "\u0000" + draft.html)) continue
+                rows.add(MergedDraft(thread.threadId, thread.contactName, foreign = !own, draft = draft))
+            }
+        }
+        return rows.sortedByDescending { it.draft.timestamp }
     }
 
     private fun addDraftRow(
