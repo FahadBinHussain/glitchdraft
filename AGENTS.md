@@ -22,6 +22,32 @@ button on `edge://extensions` is fallback.
   builds that release name from `extension/manifest.json` on every push, so the
   public version claim needs no manual sync (don't reintroduce a static
   version badge).
+- **a lost service-worker registration looks exactly like a dead backend**
+  (found 2026-11-05, message fixed in extension 1.5.6): the panel showed
+  `Load failed / Error loading messages` on messenger while `/api/health` was
+  200, `/api/drafts` 401 without a key (auth alive), the tree clean and all
+  three worker files `node --check` clean — the backend/Neon hints in that box
+  were a lie. ground truth: `chrome.runtime.sendMessage` from GlitchDraft's OWN
+  injected world returned `Could not establish connection. Receiving end does
+  not exist.` — the panel was not talking to anything. to reach the world,
+  attach to the chat tab over CDP, `Runtime.enable`,
+  read `Runtime.executionContextCreated` events and evaluate with the `contextId`
+  whose `auxData.isDefault === false` and name is `GlitchDraft` (the same probe
+  answers `chrome.runtime.getManifest().version`, so you can rule out an orphaned
+  script). the same call from a fresh background tab on the extension's own
+  `popup.html` failed identically, so it was not the page. `chrome://serviceworker-internals`
+  listed every other extension's worker (`Installation Status: ACTIVATED`) and had
+  NO entry for `aimiggpljpaaboligendncoficimnmpd` — the worker was never registered.
+  recovery is ONE manual Reload on `edge://extensions`: `tools/reload-extension.ps1`
+  opens `reload.html`, whose `chrome.runtime.sendMessage({type: "selfReload"})`
+  needs that same dead worker, so it can only print its "hit reload on
+  edge://extensions once" fallback. after the click the handler is back and the
+  ps1 works again.
+  `loadSavedMessages` used to ignore `chrome.runtime.lastError` and render the
+  generic string; it now names the disconnect and points at `edge://extensions`,
+  and the backend/Neon hints only print when a response actually came back.
+  the android `content.js` fork is untouched — there the panel talks to
+  `glitchdraft_shim.js` in-process, so there is no worker to lose.
 
 ## android / lsposed module
 

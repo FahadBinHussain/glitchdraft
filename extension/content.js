@@ -3028,17 +3028,28 @@
                 );
             }
             if (!response || !response.success) {
-                const msg = response?.message || 'Error loading messages';
-                const escaped = String(msg).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                // lastError means the message never reached the service worker (not
+                // registered, or this script's context is gone) - a broken install,
+                // not a backend problem. The generic text below sends everyone to
+                // /api/health instead of edge://extensions.
+                const disconnected = chrome.runtime.lastError;
+                const msg = disconnected
+                    ? 'Extension runtime disconnected: ' + disconnected.message
+                    : (response?.message || 'Error loading messages');
+                const hints = disconnected
+                    ? ['Reload GlitchDraft on edge://extensions - the background worker is not registered.',
+                       'tools/reload-extension.ps1 cannot fix this: it messages that same dead worker.']
+                    : ['Ensure backend is running (try /api/health)',
+                       'Neon config JSON uses apiBaseUrl + apiKey',
+                       'Reload extension after settings/manifest changes'];
+                const esc = (s) => String(s).replace(/</g, "&lt;").replace(/>/g, "&gt;");
                 ui.body.innerHTML = `
                     <div style="color:#b71c1c; font-size:12px; line-height:1.4;">
                         <div><strong>Load failed</strong></div>
-                        <div style="margin-top:6px; white-space:pre-wrap;">${escaped}</div>
+                        <div style="margin-top:6px; white-space:pre-wrap;">${esc(msg)}</div>
                         <div style="margin-top:8px; color:#555;">
-                            Troubleshoot:
-                            <br>1) Ensure backend is running (try /api/health)
-                            <br>2) Neon config JSON uses apiBaseUrl + apiKey
-                            <br>3) Reload extension after settings/manifest changes
+                            ${disconnected ? 'Fix:' : 'Troubleshoot:'}
+                            ${hints.map((h, i) => `<br>${i + 1}) ${esc(h)}`).join('')}
                         </div>
                     </div>`;
                 return;
