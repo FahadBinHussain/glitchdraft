@@ -64,28 +64,26 @@
     }
 
     .saved-messages-container {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        max-width: 100vw !important;
-        max-height: 100vh !important;
-        border-radius: 0 !important;
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        width: 520px;
+        height: 640px;
+        max-width: calc(100vw - 48px);
+        max-height: calc(100vh - 48px);
+        border-radius: 12px;
         background-color: var(--bg-primary);
         border: 1px solid var(--border);
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
         z-index: 10000;
         display: flex;
         flex-direction: column;
         font-family: system-ui, -apple-system, sans-serif;
         color: var(--text-primary);
-        resize: none;
+        resize: both;
         overflow: hidden;
-        min-width: 300px;
-        min-height: 400px;
+        min-width: 360px;
+        min-height: 440px;
         transition: opacity 0.3s ease, box-shadow 0.3s ease;
         box-sizing: border-box;
     }
@@ -2180,8 +2178,26 @@
     function applyPositionsToUI(positions) {
         if (!positions) return;
         isApplyingRemoteResize = true;
-        // Container is maximized to full window for extension windows (100vw x 100vh).
-        // Only toggle button position is restored.
+        if (positions.container) {
+            const c = positions.container;
+            const w = (c.width && c.width > 400) ? c.width : 520;
+            const h = (c.height && c.height > 520) ? c.height : 640;
+            if (c.unit === 'edge') {
+                applyEdgePosition(ui.container, c, w, h);
+            } else {
+                const isPercent = c.unit === 'percent';
+                const left = isPercent ? c.left * window.innerWidth  : c.left;
+                const top  = isPercent ? c.top  * window.innerHeight : c.top;
+                ui.container.style.left   = (left || 0) + 'px';
+                ui.container.style.top    = (top || 0)  + 'px';
+                ui.container.style.right  = 'auto';
+                ui.container.style.bottom = 'auto';
+            }
+            ui.container.style.width = w + 'px';
+            ui.container.style.height = h + 'px';
+            lastSavedWidth = w;
+            lastSavedHeight = h;
+        }
         if (positions.toggle) {
             const t = positions.toggle;
             if (t.unit === 'edge') {

@@ -60,28 +60,26 @@
     }
 
     .saved-messages-container {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
-        bottom: 0 !important;
-        width: 100vw !important;
-        height: 100vh !important;
-        max-width: 100vw !important;
-        max-height: 100vh !important;
-        border-radius: 0 !important;
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        width: 520px;
+        height: 640px;
+        max-width: calc(100vw - 48px);
+        max-height: calc(100vh - 48px);
+        border-radius: 12px;
         background-color: var(--bg-primary);
         border: 1px solid var(--border);
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16);
         z-index: 10000;
         display: flex;
         flex-direction: column;
         font-family: system-ui, -apple-system, sans-serif;
         color: var(--text-primary);
-        resize: none;
+        resize: both;
         overflow: hidden;
-        min-width: 300px;
-        min-height: 400px;
+        min-width: 360px;
+        min-height: 440px;
         transition: opacity 0.3s ease, box-shadow 0.3s ease;
         box-sizing: border-box;
     }
