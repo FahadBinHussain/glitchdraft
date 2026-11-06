@@ -43,16 +43,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request && request.type === "selfReload") {
         (async () => {
             try {
-                const tabs = await chrome.tabs.query({
-                    url: ["https://*.messenger.com/*", "https://*.facebook.com/*",
-                          "https://*.discord.com/*", "https://web.whatsapp.com/*",
-                          "https://*.instagram.com/*", "https://web.telegram.org/*"]
-                });
-                for (const tab of tabs) {
-                    if (tab.id !== undefined) {
-                        try { await chrome.tabs.reload(tab.id); } catch {}
-                    }
-                }
                 if (sender && sender.tab && sender.tab.id !== undefined) {
                     await chrome.tabs.update(sender.tab.id, { url: "about:blank" }).catch(() => {});
                 }
