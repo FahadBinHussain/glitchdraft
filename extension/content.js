@@ -986,7 +986,8 @@
         if (!cleaned) return null;
 
         cleaned = cleaned
-            .replace(/^conversation\s+with\s+/i, '')
+            .replace(/^conversation\s+(?:with|titled)\s+["']?/i, '')
+            .replace(/["']$/g, '')
             .replace(/\s*\(\s*(?:messenger|instagram|telegram)_(?:web|android)_-?\d+(?:_[^)]+)?\s*\)\s*$/i, '')
             .replace(/\s*[-–|]\s*(?:Messenger|Facebook)\s*$/i, '')
             .trim();
@@ -2422,6 +2423,26 @@
         personCache = null;
     }
 
+    function getPersonDraft(threadId) {
+        if (!threadId) return null;
+        if (personDrafts[threadId]) return personDrafts[threadId];
+        const key = threadKey(threadId);
+        for (const id in personDrafts) {
+            if (threadKey(id) === key) return personDrafts[id];
+        }
+        return null;
+    }
+
+    function threadDisplayLabel(threadId) {
+        const draft = getPersonDraft(threadId);
+        if (draft && draft.contactName) return cleanMessengerDisplayName(draft.contactName);
+        const fromId = getDisplayNameFromChatId(threadId);
+        if (fromId) {
+            return fromId.replace(/\b\w/g, (c) => c.toUpperCase());
+        }
+        return threadId;
+    }
+
     function loadPerson(chatId, callback) {
         if (personCache && personCache.chatId === chatId && Date.now() - personCache.at < 60000) {
             callback(personCache);
@@ -2493,10 +2514,11 @@
         }
 
         const totalDrafts = threadIds.reduce(
-            (sum, threadId) => sum + ((personDrafts[threadId] && personDrafts[threadId].messages) || []).length,
+            (sum, threadId) => sum + ((getPersonDraft(threadId) && getPersonDraft(threadId).messages) || []).length,
             0
         );
         const platforms = [...new Set(threadIds.map(platformOfThreadId))];
+        const threadCount = threadIds.length;
 
         const head = document.createElement('div');
         head.className = 'gd-person-head';
@@ -2506,7 +2528,8 @@
         name.title = 'Person: ' + currentPerson.displayName;
         const meta = document.createElement('div');
         meta.className = 'gd-person-meta';
-        meta.textContent = `${totalDrafts} draft${totalDrafts === 1 ? '' : 's'} · ${platforms.length} app${platforms.length === 1 ? '' : 's'}`;
+        meta.textContent = `${totalDrafts} draft${totalDrafts === 1 ? '' : 's'} · ${threadCount} chat${threadCount === 1 ? '' : 's'}` +
+            (platforms.length > 1 ? ` (${platforms.length} apps)` : '');
         head.appendChild(name);
         head.appendChild(meta);
         strip.appendChild(head);
@@ -2514,12 +2537,12 @@
         const chips = document.createElement('div');
         chips.className = 'gd-person-chips';
 
-        const makeChip = (label, count, key, unlinkThreadId) => {
+        const makeChip = (label, count, key, unlinkThreadId, titleHint) => {
             const chip = document.createElement('span');
             chip.className = 'gd-chip' + (personFilter === key ? ' active' : '');
-            chip.title = unlinkThreadId
+            chip.title = titleHint || (unlinkThreadId
                 ? `Filter ${label} - × unlinks ${unlinkThreadId}`
-                : `Filter ${label}`;
+                : `Filter ${label}`);
             const labelSpan = document.createElement('span');
             labelSpan.textContent = `${label} ${count}`;
             chip.appendChild(labelSpan);
@@ -2533,7 +2556,7 @@
                 const x = document.createElement('span');
                 x.className = 'gd-chip-x';
                 x.textContent = '×';
-                x.title = 'Unlink this platform identity (drafts stay saved)';
+                x.title = 'Unlink this chat (drafts stay saved)';
                 x.onclick = (event) => {
                     event.stopPropagation();
                     unlinkPersonThread(unlinkThreadId);
@@ -2543,17 +2566,37 @@
             chips.appendChild(chip);
         };
 
-        makeChip('All', totalDrafts, 'all', null);
+        makeChip('All', totalDrafts, 'all', null, `All ${totalDrafts} draft${totalDrafts === 1 ? '' : 's'} across ${threadCount} chat${threadCount === 1 ? '' : 's'}`);
         for (const platform of platforms) {
             const ids = threadIds.filter((threadId) => platformOfThreadId(threadId) === platform);
-            const count = ids.reduce(
-                (sum, threadId) => sum + ((personDrafts[threadId] && personDrafts[threadId].messages) || []).length,
-                0
-            );
-            // the current chat's own chip is not unlinkable: the person strip
-            // is anchored on this thread, so it must keep at least one link
-            const foreign = ids.filter((threadId) => threadId !== getCurrentChatId());
-            makeChip(platformLabel(platform), count, platform, foreign.length > 0 ? foreign[0] : null);
+            if (ids.length <= 1) {
+                const threadId = ids[0];
+                const d = getPersonDraft(threadId);
+                const count = (d && d.messages ? d.messages.length : 0);
+                const isCurrentChat = threadKey(threadId) === threadKey(getCurrentChatId());
+                makeChip(
+                    platformLabel(platform),
+                    count,
+                    platform,
+                    !isCurrentChat && threadCount > 1 ? threadId : null,
+                    `${platformLabel(platform)} (${count} draft${count === 1 ? '' : 's'})`
+                );
+            } else {
+                for (const threadId of ids) {
+                    const d = getPersonDraft(threadId);
+                    const count = (d && d.messages ? d.messages.length : 0);
+                    const isCurrentChat = threadKey(threadId) === threadKey(getCurrentChatId());
+                    const chatName = threadDisplayLabel(threadId);
+                    const label = `${platformLabel(platform)}: ${chatName}`;
+                    makeChip(
+                        label,
+                        count,
+                        threadId,
+                        !isCurrentChat && threadCount > 1 ? threadId : null,
+                        `${label} (${count} draft${count === 1 ? '' : 's'})`
+                    );
+                }
+            }
         }
 
         const linkButton = document.createElement('button');
@@ -2679,8 +2722,8 @@
         const rows = [];
         for (const threadId of threadIds) {
             const platform = platformOfThreadId(threadId);
-            if (personFilter !== 'all' && platform !== personFilter) continue;
-            const draft = personDrafts[threadId] || { messages: [], contactName: null, lastModified: 0 };
+            if (personFilter !== 'all' && platform !== personFilter && threadId !== personFilter) continue;
+            const draft = getPersonDraft(threadId) || { messages: [], contactName: null, lastModified: 0 };
             for (const message of draft.messages || []) {
                 rows.push({
                     message: message,
