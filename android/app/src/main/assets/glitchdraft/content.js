@@ -61,13 +61,13 @@
 
     .saved-messages-container {
         position: fixed;
-        bottom: 20px;
-        right: 20px;
-        width: 350px;
-        height: 500px;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
         background-color: var(--bg-primary);
         border: 1px solid var(--border);
-        border-radius: 12px;
+        border-radius: 0;
         box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
         z-index: 10000;
         display: flex;
@@ -78,8 +78,8 @@
         overflow: hidden;
         min-width: 300px;
         min-height: 400px;
-        max-width: 600px;
-        max-height: 700px;
+        max-width: 100vw;
+        max-height: 100vh;
         transition: opacity 0.3s ease, box-shadow 0.3s ease;
         box-sizing: border-box;
     }
