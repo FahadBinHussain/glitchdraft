@@ -64,26 +64,28 @@
     }
 
     .saved-messages-container {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100vw;
-        height: 100vh;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: 100vw !important;
+        max-height: 100vh !important;
+        border-radius: 0 !important;
         background-color: var(--bg-primary);
         border: 1px solid var(--border);
-        border-radius: 0;
         box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
         z-index: 10000;
         display: flex;
         flex-direction: column;
         font-family: system-ui, -apple-system, sans-serif;
         color: var(--text-primary);
-        resize: both;
+        resize: none;
         overflow: hidden;
         min-width: 300px;
         min-height: 400px;
-        max-width: 100vw;
-        max-height: 100vh;
         transition: opacity 0.3s ease, box-shadow 0.3s ease;
         box-sizing: border-box;
     }
@@ -2177,38 +2179,8 @@
     function applyPositionsToUI(positions) {
         if (!positions) return;
         isApplyingRemoteResize = true;
-        if (positions.container) {
-            const c = positions.container;
-            if (c.unit === 'edge') {
-                // New edge-anchored format
-                applyEdgePosition(ui.container, c, window.innerWidth, window.innerHeight);
-                if (c.width && !(c.width === 350 && c.height === 500)) {
-                    ui.container.style.width = c.width + 'px';
-                    lastSavedWidth = c.width;
-                }
-                if (c.height && !(c.width === 350 && c.height === 500)) {
-                    ui.container.style.height = c.height + 'px';
-                    lastSavedHeight = c.height;
-                }
-            } else {
-                // Legacy: percent or raw px — convert and apply without clamping
-                const isPercent = c.unit === 'percent';
-                const left = isPercent ? c.left * window.innerWidth  : c.left;
-                const top  = isPercent ? c.top  * window.innerHeight : c.top;
-                ui.container.style.left   = left + 'px';
-                ui.container.style.top    = top  + 'px';
-                ui.container.style.right  = 'auto';
-                ui.container.style.bottom = 'auto';
-                if (c.width && !(c.width === 350 && c.height === 500)) {
-                    ui.container.style.width = c.width + 'px';
-                    lastSavedWidth = c.width;
-                }
-                if (c.height && !(c.width === 350 && c.height === 500)) {
-                    ui.container.style.height = c.height + 'px';
-                    lastSavedHeight = c.height;
-                }
-            }
-        }
+        // Container is maximized to full window for extension windows (100vw x 100vh).
+        // Only toggle button position is restored.
         if (positions.toggle) {
             const t = positions.toggle;
             if (t.unit === 'edge') {
