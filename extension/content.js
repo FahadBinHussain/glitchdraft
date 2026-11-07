@@ -383,29 +383,32 @@
         display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 4px;
+        gap: 6px;
         margin-top: 6px;
     }
 
     .gd-chip {
         display: inline-flex;
         align-items: center;
-        gap: 3px;
-        padding: 2px 8px;
+        gap: 5px;
+        padding: 3px 9px;
         border: 1px solid var(--border);
         border-radius: 999px;
         background-color: var(--bg-primary);
         color: var(--text-secondary);
-        font-size: 10px;
-        line-height: 1.5;
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 1.4;
         cursor: pointer;
         user-select: none;
         transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease;
+        white-space: nowrap;
     }
 
     .gd-chip:hover {
         border-color: var(--accent);
-        color: var(--accent);
+        color: var(--text-primary);
+        background-color: rgba(0, 132, 255, 0.06);
     }
 
     .gd-chip.active {
@@ -414,17 +417,67 @@
         color: #fff;
     }
 
-    .gd-chip-x {
+    .gd-chip-icon {
         font-size: 11px;
         line-height: 1;
-        padding: 0 1px;
+        display: inline-flex;
+        align-items: center;
+    }
+
+    .gd-chip-label {
+        font-size: 11px;
+        line-height: 1.3;
+    }
+
+    .gd-chip-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 15px;
+        height: 15px;
+        padding: 0 4px;
+        border-radius: 999px;
+        font-size: 9px;
+        font-weight: 700;
+        line-height: 1;
+        background-color: rgba(0, 0, 0, 0.08);
+        color: var(--text-primary);
+    }
+
+    .gd-chip.active .gd-chip-badge {
+        background-color: rgba(255, 255, 255, 0.3);
+        color: #fff;
+    }
+
+    [data-theme="dark"] .gd-chip-badge {
+        background-color: rgba(255, 255, 255, 0.15);
+    }
+
+    [data-theme="dark"] .gd-chip:hover {
+        background-color: rgba(255, 255, 255, 0.05);
+    }
+
+    .gd-chip-x {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 14px;
+        height: 14px;
+        margin-left: 2px;
+        font-size: 11px;
+        line-height: 1;
         border-radius: 50%;
-        opacity: 0.6;
+        opacity: 0.55;
+        transition: opacity 0.15s, background-color 0.15s;
     }
 
     .gd-chip-x:hover {
         opacity: 1;
         background-color: rgba(0, 0, 0, 0.12);
+    }
+
+    .gd-chip.active .gd-chip-x:hover {
+        background-color: rgba(255, 255, 255, 0.25);
     }
 
     .gd-person-link {
@@ -2407,6 +2460,84 @@
     let personFilter = 'all';   // 'all' | platform key
     let personLookupError = null;
     let personCache = null;     // { chatId, at, person, drafts, candidates }
+    let personTargets = [];     // cached target objects for personFilter
+
+    function parseThreadInfo(threadId) {
+        const raw = String(threadId || '');
+        const parts = raw.split('_');
+        const app = parts[0] || 'unknown'; // messenger, instagram, telegram, whatsapp, discord
+        let client = 'web';
+        let numericId = '';
+        let slug = '';
+
+        if (parts[1] === 'web' || parts[1] === 'android') {
+            client = parts[1];
+            numericId = parts[2] || '';
+            slug = parts.slice(3).join('_');
+        } else {
+            numericId = parts[1] || '';
+            slug = parts.slice(2).join('_');
+        }
+
+        const appLabels = {
+            messenger: 'Messenger',
+            instagram: 'Instagram',
+            telegram: 'Telegram',
+            whatsapp: 'WhatsApp',
+            discord: 'Discord'
+        };
+        const appShorts = {
+            messenger: 'MSGR',
+            instagram: 'IG',
+            telegram: 'TG',
+            whatsapp: 'WA',
+            discord: 'DC'
+        };
+
+        const clientLabels = {
+            web: 'Web',
+            android: 'Android'
+        };
+
+        const clientIcons = {
+            web: '🌐',
+            android: '📱'
+        };
+
+        return {
+            threadId: raw,
+            app,
+            appLabel: appLabels[app] || app.toUpperCase().slice(0, 4),
+            appShort: appShorts[app] || app.toUpperCase().slice(0, 4),
+            client,
+            clientLabel: clientLabels[client] || client,
+            clientIcon: clientIcons[client] || '💬',
+            numericId,
+            slug
+        };
+    }
+
+    function isGroupChat(threadId, displayName) {
+        const info = parseThreadInfo(threadId);
+        if (/conversation_titled/i.test(info.slug || '') || /group|grp/i.test(info.slug || '')) return true;
+        if (info.app === 'telegram' && /^-/.test(info.numericId)) return true;
+        if (info.app === 'discord' && !/channels__me/.test(info.slug)) return true;
+        if (displayName && /^(?:conversation titled|group:?)/i.test(displayName)) return true;
+        return false;
+    }
+
+    function getChatFriendlyName(threadId) {
+        const draft = getPersonDraft(threadId);
+        if (draft && draft.contactName) {
+            return cleanMessengerDisplayName(draft.contactName);
+        }
+        const fromId = getDisplayNameFromChatId(threadId);
+        if (fromId) {
+            const cleaned = cleanMessengerDisplayName(fromId);
+            if (cleaned) return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
+        }
+        return null;
+    }
 
     function platformOfThreadId(threadId) {
         return String(threadId || '').split('_')[0] || 'unknown';
@@ -2529,12 +2660,78 @@
             return;
         }
 
+        const currentChatKey = threadKey(getCurrentChatId());
         const totalDrafts = threadIds.reduce(
             (sum, threadId) => sum + ((getPersonDraft(threadId) && getPersonDraft(threadId).messages) || []).length,
             0
         );
-        const platforms = [...new Set(threadIds.map(platformOfThreadId))];
-        const threadCount = threadIds.length;
+
+        // Group threadIds into clean, distinct targets by (app, client, chatName, isGroup)
+        const targetMap = new Map();
+        for (const threadId of threadIds) {
+            const info = parseThreadInfo(threadId);
+            const chatName = getChatFriendlyName(threadId);
+            const isGroup = isGroupChat(threadId, chatName);
+            const isCurrent = threadKey(threadId) === currentChatKey;
+            const draft = getPersonDraft(threadId);
+            const draftCount = (draft && draft.messages) ? draft.messages.length : 0;
+
+            let groupKey;
+            let targetLabel;
+            let targetIcon;
+            let tooltip;
+
+            if (isGroup) {
+                const groupTitle = chatName || 'Group';
+                groupKey = `group_${threadId}`;
+                targetIcon = '👥';
+                targetLabel = `${groupTitle} · ${info.clientLabel}`;
+                tooltip = `${info.appLabel} (${info.clientLabel}) · Group: ${groupTitle}`;
+            } else {
+                const isDifferentName = chatName && currentPerson.displayName &&
+                    chatName.toLowerCase() !== currentPerson.displayName.toLowerCase() &&
+                    info.app !== 'instagram';
+
+                if (isDifferentName) {
+                    groupKey = `direct_${info.app}_${info.client}_${chatName.toLowerCase()}`;
+                    targetIcon = info.clientIcon;
+                    targetLabel = `${info.appShort}: ${chatName} · ${info.clientLabel}`;
+                    tooltip = `${info.appLabel} (${info.clientLabel}) · ${chatName}`;
+                } else {
+                    groupKey = `direct_${info.app}_${info.client}`;
+                    targetIcon = info.clientIcon;
+                    targetLabel = `${info.appShort} · ${info.clientLabel}`;
+                    tooltip = `${info.appLabel} (${info.clientLabel})${isCurrent ? ' · This chat' : ''}`;
+                }
+            }
+
+            if (!targetMap.has(groupKey)) {
+                targetMap.set(groupKey, {
+                    key: groupKey,
+                    icon: targetIcon,
+                    label: targetLabel,
+                    titleHint: tooltip,
+                    count: 0,
+                    isCurrent: false,
+                    clientLabel: info.clientLabel,
+                    threadIds: [],
+                    threadKeys: []
+                });
+            }
+
+            const target = targetMap.get(groupKey);
+            target.threadIds.push(threadId);
+            target.threadKeys.push(threadKey(threadId));
+            target.count += draftCount;
+            if (isCurrent) target.isCurrent = true;
+        }
+
+        const targets = Array.from(targetMap.values());
+        personTargets = targets;
+
+        // Distinct client list for subtitle (e.g. "Web, Android")
+        const clients = [...new Set(targets.map((t) => t.clientLabel))];
+        const clientsSummary = clients.join(' & ');
 
         const head = document.createElement('div');
         head.className = 'gd-person-head';
@@ -2544,8 +2741,7 @@
         name.title = 'Person: ' + currentPerson.displayName;
         const meta = document.createElement('div');
         meta.className = 'gd-person-meta';
-        meta.textContent = `${totalDrafts} draft${totalDrafts === 1 ? '' : 's'} · ${threadCount} chat${threadCount === 1 ? '' : 's'}` +
-            (platforms.length > 1 ? ` (${platforms.length} apps)` : '');
+        meta.textContent = `${totalDrafts} draft${totalDrafts === 1 ? '' : 's'} · ${targets.length} chat${targets.length === 1 ? '' : 's'} (${clientsSummary})`;
         head.appendChild(name);
         head.appendChild(meta);
         strip.appendChild(head);
@@ -2553,66 +2749,72 @@
         const chips = document.createElement('div');
         chips.className = 'gd-person-chips';
 
-        const makeChip = (label, count, key, unlinkThreadId, titleHint) => {
+        const makeChip = (opts) => {
             const chip = document.createElement('span');
-            chip.className = 'gd-chip' + (personFilter === key ? ' active' : '');
-            chip.title = titleHint || (unlinkThreadId
-                ? `Filter ${label} - × unlinks ${unlinkThreadId}`
-                : `Filter ${label}`);
+            const isActive = personFilter === opts.key;
+            chip.className = 'gd-chip' + (isActive ? ' active' : '');
+            chip.title = opts.titleHint || `Filter ${opts.label}`;
+
+            if (opts.icon) {
+                const iconSpan = document.createElement('span');
+                iconSpan.className = 'gd-chip-icon';
+                iconSpan.textContent = opts.icon;
+                chip.appendChild(iconSpan);
+            }
+
             const labelSpan = document.createElement('span');
-            labelSpan.textContent = `${label} ${count}`;
+            labelSpan.className = 'gd-chip-label';
+            labelSpan.textContent = opts.label;
             chip.appendChild(labelSpan);
+
+            // Draft count badge: ONLY rendered when count > 0 in a styled counter pill
+            if (opts.count > 0) {
+                const badge = document.createElement('span');
+                badge.className = 'gd-chip-badge';
+                badge.textContent = String(opts.count);
+                chip.appendChild(badge);
+            }
+
             chip.onclick = (event) => {
-                if (unlinkThreadId && event.target.classList.contains('gd-chip-x')) return;
-                personFilter = personFilter === key ? 'all' : key;
+                if (opts.unlinkThreadIds && event.target.classList.contains('gd-chip-x')) return;
+                personFilter = personFilter === opts.key ? 'all' : opts.key;
                 renderPersonStrip();
                 renderDraftView(getCurrentChatId());
             };
-            if (unlinkThreadId) {
+
+            if (opts.unlinkThreadIds && opts.unlinkThreadIds.length > 0) {
                 const x = document.createElement('span');
                 x.className = 'gd-chip-x';
                 x.textContent = '×';
                 x.title = 'Unlink this chat (drafts stay saved)';
                 x.onclick = (event) => {
                     event.stopPropagation();
-                    unlinkPersonThread(unlinkThreadId);
+                    unlinkPersonThread(opts.unlinkThreadIds);
                 };
                 chip.appendChild(x);
             }
+
             chips.appendChild(chip);
         };
 
-        makeChip('All', totalDrafts, 'all', null, `All ${totalDrafts} draft${totalDrafts === 1 ? '' : 's'} across ${threadCount} chat${threadCount === 1 ? '' : 's'}`);
-        for (const platform of platforms) {
-            const ids = threadIds.filter((threadId) => platformOfThreadId(threadId) === platform);
-            if (ids.length <= 1) {
-                const threadId = ids[0];
-                const d = getPersonDraft(threadId);
-                const count = (d && d.messages ? d.messages.length : 0);
-                const isCurrentChat = threadKey(threadId) === threadKey(getCurrentChatId());
-                makeChip(
-                    platformLabel(platform),
-                    count,
-                    platform,
-                    !isCurrentChat && threadCount > 1 ? threadId : null,
-                    `${platformLabel(platform)} (${count} draft${count === 1 ? '' : 's'})`
-                );
-            } else {
-                for (const threadId of ids) {
-                    const d = getPersonDraft(threadId);
-                    const count = (d && d.messages ? d.messages.length : 0);
-                    const isCurrentChat = threadKey(threadId) === threadKey(getCurrentChatId());
-                    const chatName = threadDisplayLabel(threadId);
-                    const label = `${platformLabel(platform)}: ${chatName}`;
-                    makeChip(
-                        label,
-                        count,
-                        threadId,
-                        !isCurrentChat && threadCount > 1 ? threadId : null,
-                        `${label} (${count} draft${count === 1 ? '' : 's'})`
-                    );
-                }
-            }
+        // All chip
+        makeChip({
+            label: 'All',
+            count: totalDrafts,
+            key: 'all',
+            titleHint: `All ${totalDrafts} draft${totalDrafts === 1 ? '' : 's'} across ${targets.length} chat${targets.length === 1 ? '' : 's'}`
+        });
+
+        // Chat chips
+        for (const target of targets) {
+            makeChip({
+                icon: target.icon,
+                label: target.label,
+                count: target.count,
+                key: target.key,
+                unlinkThreadIds: !target.isCurrent && threadIds.length > 1 ? target.threadIds : null,
+                titleHint: `${target.titleHint} (${target.count} draft${target.count === 1 ? '' : 's'})`
+            });
         }
 
         const linkButton = document.createElement('button');
@@ -2640,9 +2842,10 @@
             source.className = 'gd-card-source';
             const badge = document.createElement('span');
             badge.className = 'gd-platform-badge';
-            badge.textContent = platformLabel(platformOfThreadId(entry.threadId));
+            const info = parseThreadInfo(entry.threadId);
+            badge.textContent = `${info.clientIcon} ${info.appShort} · ${info.clientLabel}`;
             const who = document.createElement('span');
-            who.textContent = entry.contactName || entry.threadId;
+            who.textContent = entry.contactName || info.slug || entry.threadId;
             source.appendChild(badge);
             source.appendChild(who);
             messageElement.appendChild(source);
@@ -2736,9 +2939,14 @@
     function renderMerged(chatId) {
         const threadIds = (currentPerson && currentPerson.threadIds) || [];
         const rows = [];
+        const activeTarget = (personTargets || []).find((t) => t.key === personFilter);
+        const allowedKeys = activeTarget ? new Set(activeTarget.threadKeys) : null;
+
         for (const threadId of threadIds) {
-            const platform = platformOfThreadId(threadId);
-            if (personFilter !== 'all' && platform !== personFilter && threadId !== personFilter) continue;
+            const key = threadKey(threadId);
+            if (allowedKeys && !allowedKeys.has(key)) continue;
+            if (!allowedKeys && personFilter !== 'all' && platformOfThreadId(threadId) !== personFilter && threadId !== personFilter) continue;
+
             const draft = getPersonDraft(threadId) || { messages: [], contactName: null, lastModified: 0 };
             for (const message of draft.messages || []) {
                 rows.push({
@@ -2754,7 +2962,7 @@
         }
 
         if (rows.length === 0) {
-            const label = personFilter === 'all' ? '' : ` on ${platformLabel(personFilter)}`;
+            const label = activeTarget ? ` on ${activeTarget.label}` : '';
             ui.body.innerHTML = `<p>No drafts${label} for ${currentPerson.displayName}</p>`;
             return;
         }
@@ -2779,13 +2987,19 @@
         renderSingleChat(chatId, own.messages || [], own.lastModified || 0);
     }
 
-    function unlinkPersonThread(threadId) {
-        chrome.runtime.sendMessage({ action: 'unlinkThread', chatId: threadId }, (response) => {
-            if (!response || !response.success) {
-                showNotification('Unlink failed: ' + ((response && response.message) || 'unknown error'));
+    function unlinkPersonThread(threadIdOrList) {
+        const list = Array.isArray(threadIdOrList) ? threadIdOrList : [threadIdOrList];
+        if (list.length === 0) return;
+
+        Promise.all(list.map((id) => new Promise((resolve) => {
+            chrome.runtime.sendMessage({ action: 'unlinkThread', chatId: id }, resolve);
+        }))).then((results) => {
+            const failed = results.find((r) => !r || !r.success);
+            if (failed) {
+                showNotification('Unlink failed: ' + ((failed && failed.message) || 'unknown error'));
                 return;
             }
-            showNotification(`Unlinked ${platformLabel(platformOfThreadId(threadId))} - drafts are still saved`);
+            showNotification('Unlinked chat - drafts are still saved');
             invalidatePersonCache();
             personFilter = 'all';
             loadSavedMessages();
@@ -2817,7 +3031,8 @@
 
             const badge = document.createElement('span');
             badge.className = 'gd-cand-badge';
-            badge.textContent = platformLabel(candidate.platform);
+            const info = parseThreadInfo(candidate.threadId);
+            badge.textContent = `${info.clientIcon} ${info.appShort} · ${info.clientLabel}`;
 
             const main = document.createElement('div');
             main.className = 'gd-cand-main';

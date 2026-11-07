@@ -928,3 +928,21 @@ button on `edge://extensions` is fallback.
   so it needs no guard — only the extension's load path can create rows; keep it
   that way: a load must never PUT unless the chat id is re-verified stable at
   response time.
+- person strip & multi-platform UX overhaul (2026-11-07, v1.7.0):
+  previously, the person strip grouped only by app name (`messenger`, `instagram`),
+  prepended `MSGR:` and appended raw draft counts directly into the label string,
+  producing `MSGR: Cat Fren 0`, `MSGR: Cat Fren 0`, `MSGR: Fahad Er Grp 0`, `MSGR: Cat Fren 1`.
+  this caused severe UX confusion: (1) no distinction between Web and Android;
+  (2) duplicate chips for alias threadIds on the same client; (3) draft counts looked like
+  numbered name suffixes (`#0`, `#1`).
+  Overhaul in `extension/content.js` and `OverlayController.kt`:
+  (1) `parseThreadInfo` parses client (`web` vs `android`) and app (`messenger`, `instagram`,
+  `telegram`, `whatsapp`, `discord`) with dedicated client icons (`🌐`, `📱`);
+  (2) direct chat alias threadIds on the same client and app are merged into a single logical
+  chip (`🌐 MSGR · Web`, `📱 MSGR · Android`) with aggregated draft counts;
+  (3) group chats are distinctly badged with `👥 <Group Name> · <Client>`;
+  (4) draft counts are rendered in a styled `.gd-chip-badge` pill ONLY when `count > 0`
+  (empty chips show zero trailing numbers);
+  (5) foreign draft cards and candidate picker sheets display platform + client badges
+  (`🌐 IG · Web`, `📱 MSGR · Android`).
+

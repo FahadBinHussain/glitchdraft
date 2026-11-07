@@ -838,7 +838,11 @@ object OverlayController {
 
         val rows = mergedRows(state, chatId)
         val visible = if (personFilter == "all") rows
-        else rows.filter { platformOf(it.threadId) == personFilter }
+        else rows.filter {
+            "${platformOf(it.threadId)}_${clientOf(it.threadId)}" == personFilter ||
+            platformOf(it.threadId) == personFilter ||
+            it.threadId == personFilter
+        }
 
         if (visible.isEmpty()) {
             showEmptyText(
@@ -907,8 +911,9 @@ object OverlayController {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, 0, 0, dp(ctx, 4))
             }
+            val rowClient = clientOf(row.threadId)
             badgeRow.addView(TextView(ctx).apply {
-                text = platformLabel(platformOf(row.threadId))
+                text = "${clientIcon(rowClient)} ${platformLabel(platformOf(row.threadId))} · ${clientLabel(rowClient)}"
                 textSize = 9f
                 setTextColor(WHITE)
                 setPadding(dp(ctx, 5), dp(ctx, 2), dp(ctx, 5), dp(ctx, 2))
@@ -1877,6 +1882,14 @@ object OverlayController {
     private fun platformOf(threadId: String): String =
         threadId.split("_").firstOrNull()?.takeIf { it.isNotEmpty() } ?: "unknown"
 
+    private fun clientOf(threadId: String): String {
+        val parts = threadId.split("_")
+        return if (parts.size > 1 && (parts[1] == "web" || parts[1] == "android")) parts[1] else "android"
+    }
+
+    private fun clientIcon(client: String): String = if (client == "web") "🌐" else "📱"
+    private fun clientLabel(client: String): String = if (client == "web") "Web" else "Android"
+
     private fun platformLabel(platform: String): String = when (platform) {
         "messenger" -> "MSGR"
         "instagram" -> "IG"
@@ -1943,7 +1956,8 @@ object OverlayController {
         }
 
         val totalDrafts = person.threads.sumOf { it.drafts.size }
-        val platforms = person.threads.map { platformOf(it.threadId) }.distinct()
+        val targets = person.threads.map { "${platformOf(it.threadId)}_${clientOf(it.threadId)}" }.distinct()
+        val clients = person.threads.map { clientLabel(clientOf(it.threadId)) }.distinct()
 
         strip.addView(TextView(ctx).apply {
             text = person.displayName
@@ -1953,7 +1967,7 @@ object OverlayController {
         })
         strip.addView(TextView(ctx).apply {
             text = "$totalDrafts draft${if (totalDrafts == 1) "" else "s"} · " +
-                "${platforms.size} app${if (platforms.size == 1) "" else "s"}"
+                "${targets.size} chat${if (targets.size == 1) "" else "s"} (${clients.joinToString(" & ")})"
             setTextColor(GREY_TXT)
             textSize = 10f
             setPadding(0, 0, 0, dp(ctx, 3))
@@ -1964,14 +1978,18 @@ object OverlayController {
         val chips = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
 
         chips.addView(makePersonChip(ctx, "All", totalDrafts, "all", null))
-        for (platform in platforms) {
-            val threads = person.threads.filter { platformOf(it.threadId) == platform }
+        for (targetKey in targets) {
+            val threads = person.threads.filter { "${platformOf(it.threadId)}_${clientOf(it.threadId)}" == targetKey }
+            val first = threads.first()
+            val platform = platformOf(first.threadId)
+            val client = clientOf(first.threadId)
             val count = threads.sumOf { it.drafts.size }
             // the current chat's own chip is never unlinkable — the strip is
             // anchored on it, so it must keep at least one link
             val foreign = threads.firstOrNull { threadKey(it.threadId) != ownKey }
+            val label = "${clientIcon(client)} ${platformLabel(platform)} · ${clientLabel(client)}"
             chips.addView(
-                makePersonChip(ctx, platformLabel(platform), count, platform, foreign?.threadId)
+                makePersonChip(ctx, label, count, targetKey, foreign?.threadId)
             )
         }
         chips.addView(
@@ -2013,7 +2031,7 @@ object OverlayController {
         ).also { it.marginEnd = dp(ctx, 5) }
 
         chip.addView(TextView(ctx).apply {
-            text = "$label $count"
+            text = if (count > 0) "$label $count" else label
             textSize = 11f
             setTextColor(if (active) WHITE else 0xFF12406F.toInt())
             setOnClickListener {
