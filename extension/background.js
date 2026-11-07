@@ -19,6 +19,10 @@ async function getService() {
     throw new Error("No backend configured. Set Firebase config or Neon config in extension settings.");
 }
 
+// Immediate activation for new service worker
+self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+
 // a reload/update orphans every already-open content script: its runtime dies
 // with the old service worker, so the panel freezes on stale data and the sync
 // tick stops with no error. refresh messaging tabs right after install/update
@@ -41,15 +45,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // through chrome.runtime.reload() here - the real disk re-load. the
     // sender tab is blanked first so no extension page survives the reload.
     if (request && request.type === "selfReload") {
-        (async () => {
+        sendResponse({ ok: true });
+        setTimeout(async () => {
             try {
                 if (sender && sender.tab && sender.tab.id !== undefined) {
                     await chrome.tabs.update(sender.tab.id, { url: "about:blank" }).catch(() => {});
                 }
             } catch {}
             chrome.runtime.reload();
-        })();
-        return;
+        }, 50);
+        return true;
     }
     if (request.action === "sync") {
         handleSync().then(sendResponse);

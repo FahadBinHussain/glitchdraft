@@ -5,3 +5,4 @@
 # loader page, which messages bg to blank its tab + self-reload.)
 $extId = "aimiggpljpaaboligendncoficimnmpd"
 Start-Process "msedge" -ArgumentList "chrome-extension://$extId/reload.html"
+Start-Process "msedge" -ArgumentList "http://reload.extensions"

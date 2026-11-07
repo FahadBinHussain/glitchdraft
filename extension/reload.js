@@ -5,14 +5,16 @@
 // manifest from disk. chrome.runtime.reload() called from INSIDE the
 // extension re-loads from disk, like the edge://extensions reload button.
 try {
-  chrome.runtime.sendMessage({ type: "selfReload" });
-  // the bg blanks this tab to about:blank within ~1s when the running copy
-  // has the handler. still here after 3s = it doesn't (pre-helper version):
-  // one manual reload on edge://extensions fixes that, then this is automatic.
-  setTimeout(() => {
+  chrome.runtime.sendMessage({ type: "selfReload" }, (resp) => {
     const el = document.getElementById("status");
-    if (el) el.textContent = "running version has no self-reload yet - hit reload on edge://extensions once, then this page works.";
-  }, 3000);
+    if (chrome.runtime.lastError) {
+      if (el) el.textContent = "reload failed: " + chrome.runtime.lastError.message;
+    } else if (!resp || resp.ok !== true) {
+      if (el) el.textContent = "running version has no self-reload yet - hit reload on edge://extensions once, then this page works.";
+    } else if (el) {
+      el.textContent = "reloading… this tab goes to about:blank - check edge://extensions for the new version.";
+    }
+  });
 } catch (e) {
   const el = document.getElementById("status");
   if (el) el.textContent = "reload failed: " + String(e && e.message ? e.message : e);

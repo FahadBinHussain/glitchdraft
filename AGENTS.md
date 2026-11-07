@@ -946,3 +946,11 @@ button on `edge://extensions` is fallback.
   (5) foreign draft cards and candidate picker sheets display platform + client badges
   (`🌐 IG · Web`, `📱 MSGR · Android`).
 
+
+- service worker selfReload drop fix (2026-11-07, v1.7.1):
+  `selfReload` in `extension/background.js` previously called an unawaited async IIFE
+  without `return true` or `sendResponse({ ok: true })`. Chromium killed the service
+  worker before `chrome.runtime.reload()` reached disk, causing extensions to stay on
+  the old in-memory code. Fixed by adding `self.skipWaiting()` + `self.clients.claim()`,
+  responding `{ ok: true }` and returning `true` in the message listener before the reload,
+  and adding dual trigger (`http://reload.extensions` + `reload.html`) in `reload-extension.ps1`.
