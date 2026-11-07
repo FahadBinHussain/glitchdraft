@@ -956,11 +956,34 @@ button on `edge://extensions` is fallback.
   and adding dual trigger (`http://reload.extensions` + `reload.html`) in `reload-extension.ps1`.
 
 
-- edge taskbar `--remote-debugging-port` lock gotcha (2026-11-07):
-  adding `--remote-debugging-port=9222` to the Windows taskbar Edge shortcut locks Edge's
-  profile singleton (`ProcessSingleton` error 32 / sharing violation). This silently drops
-  all subsequent `msedge` CLI invocations (such as `tools/reload-extension.ps1`), leaving
-  the browser's unpacked extension cached indefinitely on an old version (e.g. v1.6.1)
-  even across hard reloads (`Ctrl+F5`). Fix: remove `--remote-debugging-port` from the
-  taskbar shortcut (Edge CDP already listens dynamically on `DevToolsActivePort` via `edge://inspect`),
-  and perform a one-time click on the reload button in `edge://extensions`.
+- edge taskbar `--remote-debugging-port` gotcha (2026-11-07, root cause corrected):
+  adding `--remote-debugging-port=9222` to the Windows taskbar Edge shortcut **kills Edge's
+  CDP endpoint on the default profile**. Measured on this box, same profile, same
+  `chrome://inspect/#remote-debugging` toggle state:
+  - Edge started **without** the flag → DevTools endpoint **LIVE** on a dynamic port
+    (64302 on 2026-11-06) and `browser-use list_tabs()` returned the live tabs.
+  - Edge started **with** the flag → **no listener on any port** (9222 never binds, the
+    dynamic port is not opened either) and `DevToolsActivePort` goes stale, so
+    `browser_harness` dies with `fatal: DevToolsActivePort not found`.
+  The flag does not even bind 9222 — it suppresses the toggle path too. Fix: keep the
+  taskbar shortcut at `--profile-directory=Default` only. Full write-up and the
+  before/after table: `automata-private/microsoft.com/edge/AGENTS.md`.
+
+  **The earlier root cause in this file was wrong** and is retracted. There is no
+  `ProcessSingleton` error 32 / sharing violation: launching
+  `msedge.exe --profile-directory=Default --remote-debugging-port=9222` while Edge runs
+  gives **exit code 0, empty stderr, no second browser process** — identical to the same
+  launch without the flag. The singleton handoff works fine with the flag present.
+
+  **And extension reloading was never stuck.** `Start-Process "msedge"` resolves through
+  `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe` even though
+  `msedge` is not on PATH, so `tools/reload-extension.ps1` works. After running it,
+  `Secure Preferences` → extension id → `service_worker_registration_info.version` reads
+  `1.7.1` and `last_update_time` moves to that moment. To check the version the browser
+  actually loaded, read those two fields — not the disk manifest, and not a hard reload:
+  ```powershell
+  $j = Get-Content "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Secure Preferences" -Raw | ConvertFrom-Json
+  $r = $j.extensions.settings.aimiggpljpaaboligendncoficimnmpd
+  $r.service_worker_registration_info.version
+  ([DateTime]'1601-01-01').AddSeconds($r.last_update_time/1000000).ToUniversalTime()
+  ```
