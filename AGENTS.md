@@ -954,3 +954,13 @@ button on `edge://extensions` is fallback.
   the old in-memory code. Fixed by adding `self.skipWaiting()` + `self.clients.claim()`,
   responding `{ ok: true }` and returning `true` in the message listener before the reload,
   and adding dual trigger (`http://reload.extensions` + `reload.html`) in `reload-extension.ps1`.
+
+
+- edge taskbar `--remote-debugging-port` lock gotcha (2026-11-07):
+  adding `--remote-debugging-port=9222` to the Windows taskbar Edge shortcut locks Edge's
+  profile singleton (`ProcessSingleton` error 32 / sharing violation). This silently drops
+  all subsequent `msedge` CLI invocations (such as `tools/reload-extension.ps1`), leaving
+  the browser's unpacked extension cached indefinitely on an old version (e.g. v1.6.1)
+  even across hard reloads (`Ctrl+F5`). Fix: remove `--remote-debugging-port` from the
+  taskbar shortcut (Edge CDP already listens dynamically on `DevToolsActivePort` via `edge://inspect`),
+  and perform a one-time click on the reload button in `edge://extensions`.
