@@ -987,3 +987,11 @@ button on `edge://extensions` is fallback.
   $r.service_worker_registration_info.version
   ([DateTime]'1601-01-01').AddSeconds($r.last_update_time/1000000).ToUniversalTime()
   ```
+
+
+- facebook messages & e2ee support (2026-11-09, v1.7.2):
+  `https://www.facebook.com/messages/e2ee/t/<id>` and `/messages/*`:
+  (1) `manifest.json` matches widened to include `*://*.facebook.com/messages/*` so content scripts inject when entering from the inbox root;
+  (2) `getCurrentChatId` matches `\/(?:messages\/)?(?:e2ee\/)?t\/([a-zA-Z0-9_-]+)` and formats as `messenger_web_<id>_<slug>`, keeping drafts and people clustering 100% unified with `messenger.com`;
+  (3) `cleanMessengerDisplayName` strips unread notification badges (e.g. `(1) `) and handles `Conversation titled ` group chat aria-labels;
+  (4) `setupMutationObserver` removes early return on existing textboxes and listens to `popstate` so client-side SPA navigation immediately refreshes the active chat draft.

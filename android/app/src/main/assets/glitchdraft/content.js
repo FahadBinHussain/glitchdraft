@@ -653,9 +653,9 @@
       return null; // no chat open — never fall through to the url sanitizer
     }
 
-    // Try to match Facebook Messenger chat pattern
-    const fbMatch = url.match(/\/t\/(\d+)/);
-    if (fbMatch) {
+    // Try to match Facebook Messenger chat pattern (/t/<id>, /messages/t/<id>, /messages/e2ee/t/<id>)
+    const fbMatch = url.match(/\/(?:messages\/)?(?:e2ee\/)?t\/([a-zA-Z0-9_-]+)/);
+    if (fbMatch && (url.includes('messenger.com') || url.includes('facebook.com'))) {
       return fbMatch[1];
     }
 

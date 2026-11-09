@@ -8,7 +8,7 @@ export const SUPPORTED_SITES = [
     },
     {
         domain: 'facebook.com',
-        urlPattern: '*://*.facebook.com/messages/t/*',
+        urlPattern: '*://*.facebook.com/messages/*',
         checkUrl: (url) => url.includes('facebook.com') && url.includes('/messages/')
     },
     {

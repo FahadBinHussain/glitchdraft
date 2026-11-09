@@ -981,9 +981,9 @@
             return null; // no chat open — never fall through to the url sanitizer
         }
 
-        // Try to match Facebook Messenger chat pattern
-        const fbMatch = url.match(/\/t\/(\d+)/);
-        if (fbMatch) {
+        // Facebook / Messenger: /t/<id>, /messages/t/<id>, /messages/e2ee/t/<id>, etc.
+        const fbMatch = url.match(/\/(?:messages\/)?(?:e2ee\/)?t\/([a-zA-Z0-9_-]+)/);
+        if (fbMatch && (url.includes('messenger.com') || url.includes('facebook.com'))) {
             const numericId = fbMatch[1];
             const name = getCurrentChatName();
             const nameSlug = name ? sanitizeNameSlug(name) : null;
@@ -1037,6 +1037,7 @@
         if (!cleaned) return null;
 
         cleaned = cleaned
+            .replace(/^\(\d+\+?\)\s*/, '')
             .replace(/^conversation\s+(?:with|titled)\s+["']?/i, '')
             .replace(/["']$/g, '')
             .replace(/\s*\(\s*(?:messenger|instagram|telegram)_(?:web|android)_-?\d+(?:_[^)]+)?\s*\)\s*$/i, '')
@@ -1097,14 +1098,19 @@
         }
 
         // ── Messenger (messenger.com / facebook.com) ──
-        if (url.includes('messenger.com') || url.match(/facebook\.com.*\/t\//)) {
-            // Messenger uses obfuscated CSS class names, so prefer scoped header/role selectors.
+        if (url.includes('messenger.com') || (url.includes('facebook.com') && url.includes('/messages/'))) {
+            // Messenger / Facebook uses obfuscated CSS class names, so prefer scoped header/role selectors.
             const headerSelectors = [
                 'div[role="main"] [aria-label^="Conversation with "]',
+                'div[role="main"] [aria-label^="Conversation titled "]',
                 'div[role="main"] [aria-label*="Conversation with "]',
+                'div[role="main"] [aria-label*="Conversation titled "]',
                 'div[role="main"] h1',
                 'div[role="main"] h2',
                 'div[role="main"] [role="heading"]',
+                'div[role="main"] header [role="heading"]',
+                'div[role="main"] header h1',
+                'div[role="main"] header h2',
                 'div[data-testid="conversation-title"] span',
                 'header h1',
                 'header h2',
@@ -1122,10 +1128,12 @@
                 if (name) return name;
             }
 
-            // Strategy 3: document title (Messenger sets title to the contact name)
-            const titleMatch = document.title.match(/^(.+?)(?:\s*[\|\-–].*)?$/);
-            if (titleMatch && titleMatch[1] && titleMatch[1] !== 'Messenger' && titleMatch[1] !== 'Facebook') {
-                return cleanMessengerDisplayName(titleMatch[1]);
+            // Strategy 3: document title (Messenger/Facebook sets title to the contact name)
+            const rawTitle = document.title.replace(/^\(\d+\+?\)\s*/, '');
+            const titleMatch = rawTitle.match(/^(.+?)(?:\s*[\|\-–].*)?$/);
+            if (titleMatch && titleMatch[1]) {
+                const candidate = cleanMessengerDisplayName(titleMatch[1]);
+                if (candidate) return candidate;
             }
             return null;
         }
@@ -3478,6 +3486,8 @@
         // This is the list of selectors used to find the input box.
         // It's duplicated from insertMessageIntoInputField for now.
         const possibleSelectors = [
+            'div[role="main"] [contenteditable="true"][role="textbox"]',
+            'div[role="main"] [contenteditable="true"]',
             'div[aria-label="Message"][contenteditable="true"][data-lexical-editor="true"]',
             '.xzsf02u.notranslate[contenteditable="true"][role="textbox"]',
             '.notranslate[contenteditable="true"][data-lexical-editor="true"]',
@@ -3552,6 +3562,8 @@
         // Try different selectors that might match the Messenger input field
         const possibleSelectors = [
             // Add the exact selector from the user's console output first (highest priority)
+            'div[role="main"] [contenteditable="true"][role="textbox"]',
+            'div[role="main"] [contenteditable="true"]',
             'div[aria-label="Message"][contenteditable="true"][data-lexical-editor="true"]',
             '.xzsf02u.notranslate[contenteditable="true"][role="textbox"]',
             '.notranslate[contenteditable="true"][data-lexical-editor="true"]',
@@ -4222,6 +4234,9 @@
         // Check for URL changes every second
         setInterval(checkUrlChange, 1000);
 
+        // Listen for history navigation in SPA
+        window.addEventListener('popstate', checkUrlChange);
+
         // Initial URL check
         checkUrlChange();
 
@@ -4247,16 +4262,11 @@
 
         // Create an observer instance linked to the callback function
         const observer = new MutationObserver((mutationsList, observer) => {
-            // Check if the input field is now available
-            if (document.querySelector('[contenteditable="true"][role="textbox"]')) {
-                // Input field detected, no need to do anything special
-                return;
-            }
-
             // If URL has changed, check if we're in a new chat
             const chatId = getCurrentChatId();
             if (chatId && chatId !== currentChatUrl) {
                 currentChatUrl = chatId;
+                updateChatIdDisplay();
                 loadSavedMessages();
             }
         });
