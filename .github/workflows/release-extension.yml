@@ -20,6 +20,14 @@ jobs:
         with:
           node-version: 22
 
+      - name: Check extension syntax and run tests
+        shell: bash
+        run: |
+          for f in extension/*.js; do
+            node --check "$f" || exit 1
+          done
+          node --test extension/tests/*.test.js
+
       - name: Prepare release metadata
         id: meta
         shell: bash
@@ -51,6 +59,8 @@ jobs:
 
           mkdir -p "$ARTIFACT_DIR" "$PACKAGE_DIR"
           cp -R extension/. "$PACKAGE_DIR/"
+          # tests ship in the repo, not in the release artifacts
+          rm -rf "$PACKAGE_DIR/tests"
           find "$PACKAGE_DIR" -name '*.pem' -delete
 
           printf '%s' "$GLITCHDRAFT_EXTENSION_PEM_B64" | base64 --decode > "$PEM_PATH"

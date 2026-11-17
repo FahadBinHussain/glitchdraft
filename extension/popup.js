@@ -4,7 +4,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     const saveFirebaseBtn = document.getElementById("saveFirebaseBtn");
     const saveNeonBtn = document.getElementById("saveNeonBtn");
     const resetPositionBtn = document.getElementById("resetPositionBtn");
+    const openExtensionsBtn = document.getElementById("openExtensionsBtn");
     const status = document.getElementById("status");
+
+    if (openExtensionsBtn) {
+        openExtensionsBtn.addEventListener("click", async () => {
+            try {
+                await chrome.tabs.create({ url: "edge://extensions" });
+            } catch (_) {
+                showStatus("Could not open the extensions page — open edge://extensions manually.", "error");
+            }
+        });
+    }
 
     loadSupportedSites();
     await loadSavedConfigs();
@@ -42,10 +53,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     resetPositionBtn.addEventListener("click", async () => {
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-            chrome.tabs.sendMessage(tab.id, { action: "resetPosition" });
+            // Awaited: without this the success line printed even when the
+            // tab had no GlitchDraft script (or an orphaned one).
+            await chrome.tabs.sendMessage(tab.id, { action: "resetPosition" });
             showStatus("UI position randomized.", "success");
         } catch (_) {
-            showStatus("Reset failed: open a supported site first.", "error");
+            showStatus("Reset failed: open a supported site first (or reload the tab if the extension just reloaded).", "error");
         }
     });
 
@@ -121,8 +134,17 @@ document.addEventListener("DOMContentLoaded", async () => {
                     showStatus("No backend configured yet.", "error");
                 }
             }
-        } catch (_) {
-            // ignore status fetch errors in popup
+        } catch (error) {
+            // Never swallow this: a dead worker looks exactly like "no
+            // backend" if the popup stays silent. Show it loudly with the
+            // one-click way to the extensions page.
+            const kind = gdClassifyDisconnect(error);
+            if (kind === GD_DISCONNECT_WORKER_DOWN) {
+                showStatus("Background worker is not responding — reload GlitchDraft on edge://extensions.", "error");
+                if (openExtensionsBtn) openExtensionsBtn.style.display = "";
+            } else {
+                showStatus("Status check failed: " + (error && error.message ? error.message : error), "error");
+            }
         }
     }
 

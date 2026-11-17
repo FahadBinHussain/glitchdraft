@@ -3257,7 +3257,12 @@
             return;
         }
 
-        chrome.runtime.sendMessage({ action: 'getDraft', chatId: chatId }, (response) => {
+        // Retry transient worker wake failures: the first message after idle
+        // can fail while the worker starts. Orphaned contexts fail fast
+        // (gdSendWithRetry) — no retry can revive them.
+        gdSendWithRetry({ action: 'getDraft', chatId: chatId }).then((response) => {
+            // The worker answered, so any outage is over.
+            gdMarkWorkerUp();
             // Load-race guard: bail if the chat changed while this GET was in
             // flight. A stale response would render another chat's messages here
             // and, worse, the lazy back-fill below would write another chat's
@@ -3282,27 +3287,19 @@
                 );
             }
             if (!response || !response.success) {
-                // lastError means the message never reached the service worker (not
-                // registered, or this script's context is gone) - a broken install,
-                // not a backend problem. The generic text below sends everyone to
-                // /api/health instead of edge://extensions.
-                const disconnected = chrome.runtime.lastError;
-                const msg = disconnected
-                    ? 'Extension runtime disconnected: ' + disconnected.message
-                    : (response?.message || 'Error loading messages');
-                const hints = disconnected
-                    ? ['Reload GlitchDraft on edge://extensions - the background worker is not registered.',
-                       'tools/reload-extension.ps1 cannot fix this: it messages that same dead worker.']
-                    : ['Ensure backend is running (try /api/health)',
-                       'Neon config JSON uses apiBaseUrl + apiKey',
-                       'Reload extension after settings/manifest changes'];
+                // The worker answered, so this is a backend problem, not a
+                // disconnect — transport failures reject to .catch below.
+                const msg = response?.message || 'Error loading messages';
+                const hints = ['Ensure backend is running (try /api/health)',
+                    'Neon config JSON uses apiBaseUrl + apiKey',
+                    'Reload extension after settings/manifest changes'];
                 const esc = (s) => String(s).replace(/</g, "&lt;").replace(/>/g, "&gt;");
                 ui.body.innerHTML = `
                     <div style="color:#b71c1c; font-size:12px; line-height:1.4;">
                         <div><strong>Load failed</strong></div>
                         <div style="margin-top:6px; white-space:pre-wrap;">${esc(msg)}</div>
                         <div style="margin-top:8px; color:#555;">
-                            ${disconnected ? 'Fix:' : 'Troubleshoot:'}
+                            Troubleshoot:
                             ${hints.map((h, i) => `<br>${i + 1}) ${esc(h)}`).join('')}
                         </div>
                     </div>`;
@@ -3348,6 +3345,25 @@
                 renderPersonStrip();
                 renderDraftView(chatId);
             });
+        }).catch((err) => {
+            // Retries gave up, or this script is orphaned. Classify so the
+            // panel names the right fix: worker-down means reload the
+            // EXTENSION, orphaned means reload THIS TAB.
+            const kind = (err && err.gdKind) || gdClassifyDisconnect(err);
+            if (kind !== GD_DISCONNECT_OTHER) gdMarkWorkerDown();
+            if (threadKey(getCurrentChatId()) !== threadKey(chatId)) return;
+            const info = gdDisconnectHints(kind);
+            const msg = info.title + ': ' + (err && err.message ? err.message : 'unknown error');
+            const esc = (s) => String(s).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            ui.body.innerHTML = `
+                <div style="color:#b71c1c; font-size:12px; line-height:1.4;">
+                    <div><strong>Load failed</strong></div>
+                    <div style="margin-top:6px; white-space:pre-wrap;">${esc(msg)}</div>
+                    <div style="margin-top:8px; color:#555;">
+                        Fix:
+                        ${info.lines.map((h, i) => `<br>${i + 1}) ${esc(h)}`).join('')}
+                    </div>
+                </div>`;
         });
     }
 

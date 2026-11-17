@@ -38,14 +38,22 @@ button on `edge://extensions` is fallback.
   `popup.html` failed identically, so it was not the page. `chrome://serviceworker-internals`
   listed every other extension's worker (`Installation Status: ACTIVATED`) and had
   NO entry for `aimiggpljpaaboligendncoficimnmpd` — the worker was never registered.
-  recovery is ONE manual Reload on `edge://extensions`: `tools/reload-extension.ps1`
-  opens `reload.html`, whose `chrome.runtime.sendMessage({type: "selfReload"})`
-  needs that same dead worker, so it can only print its "hit reload on
-  edge://extensions once" fallback. after the click the handler is back and the
-  ps1 works again.
+  recovery was ONE manual Reload on `edge://extensions` until 1.7.3:
+  `tools/reload-extension.ps1` opens `reload.html`, whose
+  `chrome.runtime.sendMessage({type: "selfReload"})` needs that same dead
+  worker, so it could only print its "hit reload on edge://extensions once"
+  fallback. since 1.7.3 reload.html calls `chrome.runtime.reload()` directly
+  when the worker is dead — reload.html is an extension page, and that call
+  is browser-level, not a message to the worker — so the ps1 flow IS the
+  recovery now; the manual click is only the last resort if the direct call
+  throws. after the reload the handler is back and the ps1 works again.
   `loadSavedMessages` used to ignore `chrome.runtime.lastError` and render the
   generic string; it now names the disconnect and points at `edge://extensions`,
   and the backend/Neon hints only print when a response actually came back.
+  since 1.7.3 it also retries transient wake failures, tells worker-down
+  apart from an orphaned tab script (reload the TAB, not the extension),
+  and the sync tick re-renders the panel on its own when the worker comes
+  back — see the 1.7.3 bullet at the end of this file.
   the android `content.js` fork is untouched — there the panel talks to
   `glitchdraft_shim.js` in-process, so there is no worker to lose.
 
@@ -995,3 +1003,29 @@ button on `edge://extensions` is fallback.
   (2) `getCurrentChatId` matches `\/(?:messages\/)?(?:e2ee\/)?t\/([a-zA-Z0-9_-]+)` and formats as `messenger_web_<id>_<slug>`, keeping drafts and people clustering 100% unified with `messenger.com`;
   (3) `cleanMessengerDisplayName` strips unread notification badges (e.g. `(1) `) and handles `Conversation titled ` group chat aria-labels;
   (4) `setupMutationObserver` removes early return on existing textboxes and listens to `popstate` so client-side SPA navigation immediately refreshes the active chat draft.
+
+- extension disconnect recovery (2026-11-17, v1.7.3, issue #2):
+  the 2026-11-05 lost-registration symptom recurred — panel showed `Load
+  failed / Extension runtime disconnected: Could not establish connection.
+  Receiving end does not exist.` the 1.5.6 fix had only relabeled the error;
+  nothing could recover except a manual edge://extensions click. 1.7.3:
+  (1) `extension/runtimeHealth.js` (new, loaded first in the manifest and
+  in popup.html) classifies disconnects (worker-down vs orphaned via
+  `chrome.runtime.id` + error text), retries worker-down sends twice
+  (500ms/1500ms backoff, orphaned fails fast), and tracks tick recovery
+  state; (2) `loadSavedMessages` uses it — retry before erroring, and the
+  panel tells the user to reload the TAB when the script is orphaned;
+  (3) `draftSync.js` tick forces a re-render on the first success after an
+  outage, even with no message change; (4) `reload.js` calls
+  `chrome.runtime.reload()` directly when selfReload messaging fails (no
+  worker needed — reload.html is an extension page); (5) `popup.js` shows
+  a dead worker loudly with an open-edge://extensions button, and Reset UI
+  awaits its message instead of printing success blindly; (6)
+  `background.js` gains a cheap `ping` action, a null-request guard, and an
+  unknown-action catch-all (silence used to look exactly like a dead
+  worker). regression tests in `extension/tests/` (23, `node --test`,
+  vm-loaded real files with chrome stubs) run in the release workflow
+  before packaging; tests are excluded from the zip/crx. the android
+  `content.js` fork is untouched — its panel talks to the shim in-process,
+  so there is no worker to lose. live Edge checks owed: dead-worker ps1
+  recovery, tick self-heal, orphaned-tab hint.

@@ -40,6 +40,15 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    // A null request used to throw on `request.action` below and kill the
+    // listener turn. Ignore it instead — there is nothing to answer.
+    if (!request) return;
+    // Cheap liveness probe: answers without touching any backend, so the
+    // panel and popup can tell "worker dead" from "backend down".
+    if (request.action === "ping") {
+        sendResponse({ success: true, pong: true });
+        return;
+    }
     // dev self-reload (tools/reload-extension.ps1 -> extension/reload.html):
     // Extensions Reloader never re-reads manifest.json, so manifest bumps go
     // through chrome.runtime.reload() here - the real disk re-load. the
@@ -108,6 +117,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         handleUnlinkThread(request.chatId).then(sendResponse);
         return true;
     }
+    // Unknown actions used to get no response at all, which looks exactly
+    // like a dead worker from the sender side. Answer loudly instead.
+    sendResponse({ success: false, message: "Unknown action: " + request.action });
 });
 
 async function handleGetStatus() {

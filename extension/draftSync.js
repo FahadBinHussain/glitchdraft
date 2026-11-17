@@ -147,15 +147,31 @@ function gdSyncTick() {
 
     // Check for message changes
     chrome.runtime.sendMessage({ action: 'getDraft', chatId }, (response) => {
-        if (!response || !response.success) return;
+        if (!response || !response.success) {
+            // A disconnect here (worker down, or this script orphaned) marks
+            // the outage so the next successful tick can force a re-render.
+            // A backend error (success false, no lastError) is not an
+            // outage — it must not arm the recovery path.
+            if (chrome.runtime.lastError &&
+                gdClassifyDisconnect(chrome.runtime.lastError) !== GD_DISCONNECT_OTHER) {
+                gdMarkWorkerDown();
+            }
+            return;
+        }
+        // First success after an outage forces a re-render even when
+        // nothing changed — otherwise a panel stuck on "Load failed" stays
+        // stuck after the worker comes back, until a message changes.
+        const recovered = gdMarkWorkerUp();
         const messages = response.messages || [];
         const messagesHash = JSON.stringify(messages.map(m => ({ t: m.timestamp, h: m.html })));
-        if (messagesHash === _lastKnownMessagesHash) return;
+        const hashChanged = messagesHash !== _lastKnownMessagesHash;
+        if (!hashChanged && !recovered) return;
 
         // first sight of a chat (startup or switch) is a baseline, not a remote edit
         const isBaseline = chatChanged || _lastKnownMessagesHash === null;
         _lastKnownMessagesHash = messagesHash;
-        if (!isBaseline) showNotification('Messages synced from another device', '', 'success');
+        // A recovery with no change is not a remote edit — no notification.
+        if (!isBaseline && hashChanged) showNotification('Messages synced from another device', '', 'success');
         loadSavedMessages();
     });
 
