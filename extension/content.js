@@ -1185,8 +1185,10 @@
     }
 
     // Thin wrapper — implementation lives in draftSync.js (gdLazyRenameIfNeeded)
-    function lazyRenameIfNeeded(response, currentChatId) {
-        gdLazyRenameIfNeeded(response, currentChatId, getCurrentChatName);
+    function lazyRenameIfNeeded(response, currentChatId, contactName) {
+        // A foreign row renames under its OWN name when one is known — the
+        // current chat's name belongs to a different thread.
+        gdLazyRenameIfNeeded(response, currentChatId, contactName ? () => contactName : getCurrentChatName);
     }
 
     // WhatsApp-specific chat detection
@@ -2842,7 +2844,7 @@
         messageElement.className = 'saved-messages-item' + (foreign ? ' gd-foreign' : '');
         messageElement.dataset.savedMessageUiElement = 'true';
         if (foreign) {
-            messageElement.title = `From ${entry.threadId} - read-only here (Use/Edit/Delete belong to that chat)`;
+            messageElement.title = `From ${entry.threadId} - Edit/Delete change that chat's drafts`;
         }
 
         if (foreign) {
@@ -2860,6 +2862,9 @@
         }
 
         const messageText = document.createElement('div');
+        // Stable class: editMessage used to grab 'div:first-child', which is
+        // the source badge on foreign cards, not the message text.
+        messageText.className = 'saved-message-text';
         messageText.innerHTML = entry.message.html;
         messageText.dataset.savedMessageUiElement = 'true';
 
@@ -2880,8 +2885,10 @@
         actionsDiv.className = 'saved-messages-actions';
         actionsDiv.dataset.savedMessageUiElement = 'true';
 
-        // foreign rows: Copy only. "Use" would type into the wrong app, and
-        // Edit/Delete address a row in THIS chat's thread id.
+        // "Use" stays own-chat-only: it types into THIS tab's input, so on a
+        // foreign row it would send the draft to the wrong chat. Edit/Delete
+        // carry the row's own thread id (see editMessage/deleteMessage), so
+        // they work on foreign rows too.
         if (!foreign) {
             const useButton = document.createElement('button');
             useButton.className = 'saved-message-use';
@@ -2901,24 +2908,25 @@
         copyButton.onclick = () => copyToClipboard(entry.message.html, 'Message copied to clipboard! You can now paste it.');
         actionsDiv.appendChild(copyButton);
 
-        if (!foreign) {
-            const editButton = document.createElement('button');
-            editButton.className = 'saved-message-edit';
-            editButton.textContent = 'Edit';
-            editButton.style.backgroundColor = '#2196F3';
-            editButton.style.color = 'white';
-            editButton.title = 'Edit message';
-            editButton.dataset.savedMessageUiElement = 'true';
-            editButton.onclick = () => editMessage(entry.message.timestamp, entry.message.html, messageElement);
-            actionsDiv.appendChild(editButton);
+        // Edit/Delete are NOT gated on foreign: they act on the row's own
+        // thread id, not the current chat (a foreign row used to be
+        // Copy-only because these helpers only knew the current chat).
+        const editButton = document.createElement('button');
+        editButton.className = 'saved-message-edit';
+        editButton.textContent = 'Edit';
+        editButton.style.backgroundColor = '#2196F3';
+        editButton.style.color = 'white';
+        editButton.title = 'Edit message';
+        editButton.dataset.savedMessageUiElement = 'true';
+        editButton.onclick = () => editMessage(entry.message.timestamp, entry.message.html, messageElement, entry.threadId, entry.contactName);
+        actionsDiv.appendChild(editButton);
 
-            const deleteButton = document.createElement('button');
-            deleteButton.className = 'saved-message-delete';
-            deleteButton.textContent = 'Delete';
-            deleteButton.dataset.savedMessageUiElement = 'true';
-            deleteButton.onclick = () => deleteMessage(entry.message.timestamp);
-            actionsDiv.appendChild(deleteButton);
-        }
+        const deleteButton = document.createElement('button');
+        deleteButton.className = 'saved-message-delete';
+        deleteButton.textContent = 'Delete';
+        deleteButton.dataset.savedMessageUiElement = 'true';
+        deleteButton.onclick = () => deleteMessage(entry.message.timestamp, entry.threadId, entry.contactName);
+        actionsDiv.appendChild(deleteButton);
 
         messageElement.appendChild(messageText);
         messageElement.appendChild(timestampDiv);
@@ -3816,9 +3824,9 @@
     }
 
     // Function to delete a saved message
-    function editMessage(timestamp, currentHtml, messageElement) {
+    function editMessage(timestamp, currentHtml, messageElement, threadId, contactName) {
         // Convert the message display to an editable textarea
-        const messageText = messageElement.querySelector('div:first-child');
+        const messageText = messageElement.querySelector('.saved-message-text');
         const actionsDiv = messageElement.querySelector('.saved-messages-actions');
         
         // Create textarea with current content
@@ -3851,7 +3859,7 @@
         saveButton.style.backgroundColor = '#4CAF50';
         saveButton.style.color = 'white';
         saveButton.dataset.savedMessageUiElement = 'true';
-        saveButton.onclick = () => saveEditedMessage(timestamp, textarea.value);
+        saveButton.onclick = () => saveEditedMessage(timestamp, textarea.value, threadId, contactName);
         
         const cancelButton = document.createElement('button');
         cancelButton.className = 'saved-message-delete';
@@ -3865,18 +3873,21 @@
         textarea.focus();
     }
     
-    function saveEditedMessage(timestamp, newContent) {
-        const chatId = getCurrentChatId();
+    function saveEditedMessage(timestamp, newContent, threadId, contactName) {
+        // The row's own thread id — NOT getCurrentChatId(): in the merged
+        // view this message may belong to another linked chat, and saving
+        // to the current chat would edit the wrong thread (or nothing).
+        const chatId = threadId || getCurrentChatId();
         if (!chatId) return;
-        
+
         chrome.runtime.sendMessage({ action: 'getDraft', chatId: chatId }, (response) => {
             if (!response || !response.success) {
                 console.error('Failed to load messages for edit');
                 return;
             }
-            
+
             const savedMessages = response.messages || [];
-            lazyRenameIfNeeded(response, chatId);
+            lazyRenameIfNeeded(response, chatId, contactName);
             
             // Find and update the message
             const messageIndex = savedMessages.findIndex(msg => msg.timestamp === timestamp);
@@ -3888,8 +3899,9 @@
             // Update the message with new content (as plain HTML)
             savedMessages[messageIndex].html = newContent.replace(/\n/g, '<br>');
             
-            // Save updated list to Firestore
-            chrome.runtime.sendMessage({ action: 'saveDraft', chatId: chatId, messages: savedMessages, contactName: getCurrentChatName() }, (saveResponse) => {
+            // Save updated list to Firestore — with the ROW's contact name,
+            // not the current chat's, or an edit would rename the thread.
+            chrome.runtime.sendMessage({ action: 'saveDraft', chatId: chatId, messages: savedMessages, contactName: contactName || getCurrentChatName() }, (saveResponse) => {
                 if (saveResponse && saveResponse.success) {
                     console.log('Message updated in Firestore');
                     loadSavedMessages();
@@ -3900,9 +3912,12 @@
         });
     }
 
-    function deleteMessage(timestamp) {
+    function deleteMessage(timestamp, threadId, contactName) {
         console.log('Deleting message with timestamp:', timestamp);
-        const chatId = getCurrentChatId();
+        // The row's own thread id — NOT getCurrentChatId(): in the merged
+        // view this message may belong to another linked chat, and deleting
+        // from the current chat would remove the wrong message (or nothing).
+        const chatId = threadId || getCurrentChatId();
         if (!chatId) return;
 
         chrome.runtime.sendMessage({ action: 'getDraft', chatId: chatId }, (response) => {
@@ -3910,9 +3925,9 @@
                 console.error('Failed to load messages for delete');
                 return;
             }
-            
+
             const savedMessages = response.messages || [];
-            lazyRenameIfNeeded(response, chatId);
+            lazyRenameIfNeeded(response, chatId, contactName);
 
             // Find and remove the message
             const messageIndex = savedMessages.findIndex(msg => msg.timestamp === timestamp);
@@ -3923,8 +3938,9 @@
 
             savedMessages.splice(messageIndex, 1);
 
-            // Save updated list to Firestore
-            chrome.runtime.sendMessage({ action: 'saveDraft', chatId: chatId, messages: savedMessages, contactName: getCurrentChatName() }, (saveResponse) => {
+            // Save updated list to Firestore — with the ROW's contact name,
+            // not the current chat's, or a delete would rename the thread.
+            chrome.runtime.sendMessage({ action: 'saveDraft', chatId: chatId, messages: savedMessages, contactName: contactName || getCurrentChatName() }, (saveResponse) => {
                 if (saveResponse && saveResponse.success) {
                     console.log('Message deleted from Firestore');
                     loadSavedMessages();
@@ -4327,4 +4343,16 @@
     
     // Debug function exposed (commented out for optimization)
     // window.debugWhatsAppGlitchDraft = debugWhatsAppStructure;
+
+    // Test seam: the node test harness sets globalThis.__gdTestHooks
+    // before loading this file and gets the real card builders. Never set
+    // in the browser, so this is dead code in the shipped extension.
+    if (typeof globalThis !== 'undefined' && globalThis.__gdTestHooks) {
+        globalThis.__gdTestHooks.buildDraftCard = buildDraftCard;
+        globalThis.__gdTestHooks.editMessage = editMessage;
+        globalThis.__gdTestHooks.deleteMessage = deleteMessage;
+        globalThis.__gdTestHooks.saveEditedMessage = saveEditedMessage;
+        globalThis.__gdTestHooks.getCurrentChatId = getCurrentChatId;
+        globalThis.__gdTestHooks.getCurrentChatName = getCurrentChatName;
+    }
 })();

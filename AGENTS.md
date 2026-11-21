@@ -1029,3 +1029,31 @@ button on `edge://extensions` is fallback.
   `content.js` fork is untouched — its panel talks to the shim in-process,
   so there is no worker to lose. live Edge checks owed: dead-worker ps1
   recovery, tick self-heal, orphaned-tab hint.
+
+- merged view: Edit/Delete on foreign rows (2026-11-21, v1.7.4, issue #3):
+  in the merged person view every foreign row was Copy-only — Edit/Delete
+  were gated behind `if (!foreign)` in `buildDraftCard` since 9783c5b, so
+  a user sitting in a chat with no drafts of its own saw NO Edit/Delete
+  button anywhere in the panel. the gate existed for a real reason:
+  `editMessage`/`deleteMessage`/`saveEditedMessage` hard-coded
+  `getCurrentChatId()` (and `getCurrentChatName()`), so on a foreign row
+  they would fetch/edit the current chat's draft — wrong thread — and
+  saveDraft would overwrite the foreign thread's contact name. fix: the
+  row's own thread id + contact name thread through all three helpers
+  (`threadId || getCurrentChatId()` fallback keeps old callers safe),
+  `lazyRenameIfNeeded` takes the row's name too, and the buttons are
+  un-gated. "Use" stays own-chat-only — it types into THIS tab's input.
+  second bug found in the same pass: `editMessage` grabbed the message
+  text with `querySelector('div:first-child')`, which is the SOURCE BADGE
+  row on foreign cards — the message text div now has a stable
+  `saved-message-text` class and edit targets that. regression tests in
+  `extension/tests/draft-card-actions.test.js` (6, vm-loaded real
+  content.js + fake DOM via the `__gdTestHooks` seam at the end of the
+  IIFE — dead code in the browser, the flag is only ever set by the
+  harness): foreign card buttons, own card buttons, source badge, foreign
+  delete/edit hitting the row thread with the row name, own-row behavior
+  unchanged. red-check proven: re-gating the buttons fails exactly the 3
+  foreign tests. the android fork has no `foreign` concept and already
+  shows Edit/Delete unconditionally — untouched. live Edge checks owed:
+  merged view from a draft-less chat shows the buttons, foreign delete
+  removes from that thread only, foreign edit lands with the name intact.
