@@ -1057,3 +1057,28 @@ button on `edge://extensions` is fallback.
   shows Edit/Delete unconditionally — untouched. live Edge checks owed:
   merged view from a draft-less chat shows the buttons, foreign delete
   removes from that thread only, foreign edit lands with the name intact.
+
+- laptop deploy from ssh (2026-11-21, 1.7.4 went live this way): the
+  laptop checkout IS the loaded unpacked extension
+  (`C:\Users\Admin\Downloads\glitchdraft\extension`, location 4 in
+  Secure Preferences), so `git pull` updates the live files — but
+  `tools/reload-extension.ps1` does NOTHING from a non-interactive ssh
+  session (Start-Process msedge never reaches the interactive Edge: no
+  tab opens, no reload, exit code still 0). reliable path: CDP over the
+  toggle endpoint — DevToolsActivePort gives the port + ws path, but
+  Edge 156 serves NO /json/* http endpoints (all 404, ws-only), so talk
+  to the browser websocket (ClientWebSocket works from powershell):
+  Target.createTarget opens reload.html as a BACKGROUND tab (no focus
+  stolen), reload.js does the rest. verify the LOADED version from
+  inside the worker, not from prefs: attach to the background.js target
+  and Runtime.evaluate `chrome.runtime.getManifest().version` — 1.7.4
+  confirmed this way. Edge 156 Secure Preferences has NO
+  service_worker_registration_info and NO manifest.version, and
+  last_update_time does NOT move on reload, so the old verify-by-prefs
+  path is dead. plumbing: `~/workspace/tailscale-ssh-connect.py`
+  (CONNECT proxy helper for ssh over the 3130 tunnel; the vm default
+  key already works, no dolby key needed), `~/workspace/laptop-ps.sh`
+  (runs a .ps1 on the laptop via base64 -EncodedCommand, because cmd
+  mangles nested quotes in ssh remote commands), scripts in
+  `~/workspace/glitchdraft-board/` (cdp-reload.ps1, cdp-version.ps1,
+  cdp-targets.ps1, check-sw.ps1, check-ext2.ps1).
