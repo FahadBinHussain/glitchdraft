@@ -3904,6 +3904,10 @@
             chrome.runtime.sendMessage({ action: 'saveDraft', chatId: chatId, messages: savedMessages, contactName: contactName || getCurrentChatName() }, (saveResponse) => {
                 if (saveResponse && saveResponse.success) {
                     console.log('Message updated in Firestore');
+                    // The merged view renders from the 60s person cache — a
+                    // successful edit must clear it, or the panel keeps
+                    // showing the OLD text until the cache expires.
+                    invalidatePersonCache();
                     loadSavedMessages();
                 } else {
                     console.error('Failed to update:', saveResponse?.message);
@@ -3943,6 +3947,10 @@
             chrome.runtime.sendMessage({ action: 'saveDraft', chatId: chatId, messages: savedMessages, contactName: contactName || getCurrentChatName() }, (saveResponse) => {
                 if (saveResponse && saveResponse.success) {
                     console.log('Message deleted from Firestore');
+                    // The merged view renders from the 60s person cache — a
+                    // successful delete must clear it, or the deleted card
+                    // stays on screen until the cache expires.
+                    invalidatePersonCache();
                     loadSavedMessages();
                 } else {
                     console.error('Failed to delete:', saveResponse?.message);
@@ -4354,5 +4362,8 @@
         globalThis.__gdTestHooks.saveEditedMessage = saveEditedMessage;
         globalThis.__gdTestHooks.getCurrentChatId = getCurrentChatId;
         globalThis.__gdTestHooks.getCurrentChatName = getCurrentChatName;
+        globalThis.__gdTestHooks.invalidatePersonCache = invalidatePersonCache;
+        globalThis.__gdTestHooks.loadPerson = loadPerson;
+        globalThis.__gdTestHooks.getPersonCache = () => personCache;
     }
 })();

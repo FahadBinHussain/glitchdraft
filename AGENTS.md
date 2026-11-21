@@ -1082,3 +1082,25 @@ button on `edge://extensions` is fallback.
   mangles nested quotes in ssh remote commands), scripts in
   `~/workspace/glitchdraft-board/` (cdp-reload.ps1, cdp-version.ps1,
   cdp-targets.ps1, check-sw.ps1, check-ext2.ps1).
+
+- delete/edit must clear the person cache (2026-11-21, v1.7.5, issue #4):
+  deleting a foreign draft LOOKED like it took ~60s — the card stayed on
+  screen. the server delete finished in seconds; the merged view renders
+  from `personCache` (60s TTL in `loadPerson`), and only link/unlink
+  called `invalidatePersonCache()` — delete/edit re-rendered from the
+  stale cache, and the 10s sync tick only hashes the CURRENT chat's
+  messages, so it never noticed a foreign row change. own-chat deletes
+  looked instant because `loadSavedMessages()` overwrites
+  `personDrafts[chatId]` with the fresh GET. fix: `invalidatePersonCache()`
+  on delete/edit SAVE SUCCESS only (a failed save must NOT invalidate —
+  the cached data is still correct), then `loadSavedMessages()` refetches
+  the person. rule for the future: ANY write that changes what the
+  merged view shows must invalidate the person cache on success, or the
+  panel lies for up to 60s. regression tests in
+  `extension/tests/person-cache-invalidation.test.js` (4, same vm harness
+  as the card tests; getPerson answers from the live store, so a refetch
+  returns post-change data): delete refetches, edit refetches, failed
+  save keeps the cache, second loadPerson within 60s still serves the
+  cache. red-check proven: removing the two invalidate calls fails
+  exactly the delete + edit tests. seam extended with
+  `invalidatePersonCache`, `loadPerson`, `getPersonCache`.
